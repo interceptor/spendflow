@@ -281,3 +281,91 @@ def parse_raiffeisen(text: str) -> list[dict]:
     if not txns:
         raise ValueError("No statement entries found - not a Raiffeisen Kontoauszug?")
     return txns
+
+
+# ---------- category anomaly detection (pure; feeds the Review card) ----------
+def _norm_cat(s: str) -> str:
+    """Normalize a category/subcategory name for near-duplicate comparison:
+    case-fold and drop spaces/hyphens so 'Bank fees' ~ 'bank-fees' ~ 'Bankfees'."""
+    return re.sub(r"[\s\-_]+", "", (s or "").casefold())
+
+
+def detect_anomalies(txns: list[dict]) -> list[dict]:
+    """Scan categorized transactions for likely category-hygiene problems.
+
+    Returns findings [{type, severity, title, detail, items}] where type is one of
+    'duplicate' | 'cross_level' | 'singleton' | 'outlier'. Pure: takes the txn
+    dicts (needs cat, sub, amount, desc), returns data the UI renders. No I/O.
+    """
+    cat_txns: dict[str, list[dict]] = {}
+    subs: set[str] = set()
+    for t in txns:
+        c = t.get("cat")
+        if c and c != "Uncategorized":
+            cat_txns.setdefault(c, []).append(t)
+        if t.get("sub"):
+            subs.add(t["sub"])
+    cats = set(cat_txns)
+    out: list[dict] = []
+
+    # 1) near-duplicate category names (case/space/hyphen only)
+    by_norm: dict[str, set[str]] = {}
+    for c in cats:
+        by_norm.setdefault(_norm_cat(c), set()).add(c)
+    for variants in by_norm.values():
+        if len(variants) > 1:
+            names = sorted(variants, key=lambda c: -len(cat_txns[c]))  # most-used first
+            out.append({
+                "type": "duplicate", "severity": "warn",
+                "title": f"Duplicate category: {' / '.join(names)}",
+                "detail": f"These names differ only by case or spacing. Merge into "
+                          f"'{names[0]}'?",
+                "items": [{"name": c, "n": len(cat_txns[c])} for c in names]})
+
+    # 2) a name used as BOTH a category and a subcategory (causes Sankey loops)
+    for name in sorted(cats & subs):
+        out.append({
+            "type": "cross_level", "severity": "warn",
+            "title": f"'{name}' is both a category and a subcategory",
+            "detail": "Reusing a name at two levels is confusing and distorts the "
+                      "flow chart. Rename one of them.",
+            "items": [{"name": name, "n": len(cat_txns.get(name, []))}]})
+
+    # 3) singleton categories (a single transaction — possible typo / stray)
+    singletons = sorted((c for c in cats if len(cat_txns[c]) == 1))
+    if singletons:
+        out.append({
+            "type": "singleton", "severity": "info",
+            "title": f"{len(singletons)} categor{'y' if len(singletons)==1 else 'ies'} "
+                     f"with a single transaction",
+            "detail": "Might be a typo or a one-off worth folding into another category.",
+            "items": [{"name": c, "n": 1} for c in singletons]})
+
+    # 4) amount outliers within a category (robust: median + MAD)
+    for c, ts in cat_txns.items():
+        amts = sorted(abs(t["amount"]) for t in ts)
+        if len(amts) < 4:
+            continue  # too few points to call anything an outlier
+        mid = len(amts) // 2
+        median = amts[mid] if len(amts) % 2 else (amts[mid - 1] + amts[mid]) / 2
+        devs = sorted(abs(a - median) for a in amts)
+        mmid = len(devs) // 2
+        mad = devs[mmid] if len(devs) % 2 else (devs[mmid - 1] + devs[mmid]) / 2
+        if mad == 0:
+            continue  # no spread -> nothing to flag
+        flagged = []
+        for t in ts:
+            score = abs(abs(t["amount"]) - median) / (1.4826 * mad)  # ~z-score
+            if score >= 5 and abs(t["amount"]) > median * 3:
+                flagged.append({"desc": (t.get("desc") or "")[:60],
+                                "amount": t["amount"], "score": round(score, 1)})
+        if flagged:
+            flagged.sort(key=lambda f: -abs(f["amount"]))
+            out.append({
+                "type": "outlier", "severity": "info",
+                "title": f"Unusual amount in '{c}'",
+                "detail": f"Far outside this category's typical spend "
+                          f"(median {median:.0f}). Check for a mis-categorization.",
+                "items": flagged})
+
+    return out

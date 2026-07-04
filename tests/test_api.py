@@ -129,6 +129,16 @@ def test_assign_uncategorized_untags_not_pins(client):
     assert t["cat"] == "Food"
 
 
+def test_anomalies_endpoint(client):
+    client.post("/api/import/txns", json=TXNS)
+    # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding
+    ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
+    findings = client.get("/api/anomalies").json()
+    assert any(f["type"] == "duplicate" for f in findings)
+
+
 def test_assign_validates(client):
     assert client.post("/api/assign", json={"cat": "X"}).status_code == 422
     assert client.post("/api/assign",

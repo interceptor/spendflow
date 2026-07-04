@@ -82,6 +82,18 @@
                      border-bottom:1px solid var(--line); }
   #rulesList .rx { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #rulesList .rcat { color:var(--accent); white-space:nowrap; }
+  #reviewList .finding { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  #reviewList .finding:last-child { border-bottom:none; }
+  #reviewList .sev { flex:0 0 auto; font-size:15px; line-height:1.3; }
+  #reviewList .sev.warn { color:#e0b06a; } #reviewList .sev.info { color:var(--muted); }
+  #reviewList .f-body { flex:1; min-width:0; }
+  #reviewList .f-title { font-weight:600; font-size:13.5px; }
+  #reviewList .f-detail { color:var(--muted); font-size:12.5px; margin:2px 0 4px; }
+  #reviewList .f-items { font-size:12px; color:var(--text); }
+  #reviewList .f-items .it { display:inline-block; margin:2px 8px 2px 0; padding:1px 7px;
+                            border:1px solid var(--line); border-radius:10px; white-space:nowrap; }
+  #reviewList .f-items .it b { color:var(--accent); }
+  #reviewList .clean { color:var(--muted); font-size:13px; }
 
   /* guided tagging panel */
   #guide { display:none; background:var(--panel2); border:1px solid var(--accent);
@@ -147,6 +159,12 @@
 
   <div id="chart"></div>
   <div id="trend"></div>
+
+  <div class="card" id="reviewCard">
+    <h3>Review <span id="reviewCount" style="color:var(--muted);font-weight:400"></span></h3>
+    <div class="hint">Category hygiene checks — duplicate names, cross-level reuse, singletons, and amount outliers.</div>
+    <div id="reviewList"></div>
+  </div>
 
   <div class="cols">
     <div class="card" id="uncatCard">
@@ -318,6 +336,7 @@ async function refresh() {
   renderTrend();
   loadRules();
   loadUncategorized();
+  loadReview();
 }
 
 function render() {
@@ -329,7 +348,7 @@ function render() {
   const saved = totalIn - totalOut;
 
   $('stats').style.display = 'flex';
-  ['uncatCard', 'rulesCard'].forEach(id => $(id).style.display = 'block');
+  ['uncatCard', 'rulesCard', 'reviewCard'].forEach(id => $(id).style.display = 'block');
   ['chart', 'trend'].forEach(id => $(id).style.display = 'block');
   $('sIn').textContent = fmt(totalIn);
   $('sOut').textContent = fmt(totalOut);
@@ -589,6 +608,31 @@ $('saveRules').onclick = async () => {
     refresh();
   } catch (err) { alert(err.message); }
 };
+
+// ---------- Review card: category anomaly findings ----------
+async function loadReview() {
+  const findings = await api('/api/anomalies');
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const warns = findings.filter(f => f.severity === 'warn').length;
+  $('reviewCount').textContent = findings.length
+    ? `· ${findings.length} finding${findings.length === 1 ? '' : 's'}${warns ? ` (${warns} to fix)` : ''}`
+    : '';
+  const icon = sev => sev === 'warn' ? '⚠' : 'ⓘ';
+  const itemLabel = it => it.desc != null
+    ? `${esc(it.desc)} <b>${fmt(it.amount)}</b>`
+    : `${esc(it.name)} <b>${it.n}×</b>`;
+  $('reviewList').innerHTML = findings.length
+    ? findings.map(f => `
+      <div class="finding">
+        <div class="sev ${f.severity}">${icon(f.severity)}</div>
+        <div class="f-body">
+          <div class="f-title">${esc(f.title)}</div>
+          <div class="f-detail">${esc(f.detail)}</div>
+          <div class="f-items">${f.items.map(it => `<span class="it">${itemLabel(it)}</span>`).join('')}</div>
+        </div>
+      </div>`).join('')
+    : '<div class="clean">✓ No category issues detected.</div>';
+}
 
 refresh().catch(() => {});  // empty DB on first run is fine
 </script>

@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .core import (categorize, compile_rules, merchant_token, parse_camt,
-                   parse_raiffeisen, suggest_rule, txn_hash)
+from .core import (categorize, compile_rules, detect_anomalies, merchant_token,
+                   parse_camt, parse_raiffeisen, suggest_rule, txn_hash)
 
 DATA_DIR = Path(os.environ.get("SPENDFLOW_DATA", "data"))
 DB_PATH = DATA_DIR / "spendflow.db"
@@ -195,6 +195,15 @@ def categories():
         if r.get("sub") and r["sub"] not in cats[r["cat"]]:
             cats[r["cat"]].append(r["sub"])
     return cats
+
+
+@app.get("/api/anomalies")
+def anomalies():
+    """Category-hygiene findings (near-duplicate names, name reused across levels,
+    singleton categories, amount outliers) for the Review card. Read-only hints."""
+    with db() as con:
+        txns = [dict(r) for r in con.execute("SELECT cat, sub, amount, desc FROM txn")]
+    return detect_anomalies(txns)
 
 
 # ---------- categorize ----------

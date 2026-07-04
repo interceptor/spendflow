@@ -3,7 +3,8 @@ import re
 import pytest
 from spendflow.core import (parse_amount, parse_date, txn_hash, parse_camt,
                             compile_rules, categorize,
-                            merchant_token, merchant_regex, suggest_category, suggest_rule)
+                            merchant_token, merchant_regex, suggest_category, suggest_rule,
+                            detect_anomalies)
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -260,3 +261,56 @@ def test_parse_raiffeisen_negative_balance():
     txns = parse_raiffeisen(RAIFFEISEN_NEGATIVE)
     assert [t["amount"] for t in txns] == [-0.58, -19.67, 20.25]  # running saldo: -0.58, -20.25, 0.00
     assert txns[2]["desc"].startswith("Saldierung via Übertrag")
+
+
+# ---------- category anomaly detection ----------
+def _types(txns):
+    return {a["type"] for a in detect_anomalies(txns)}
+
+
+def test_anomaly_duplicate_names():
+    txns = [{"cat": "taxes", "sub": None, "amount": -1, "desc": "a"},
+            {"cat": "Taxes", "sub": None, "amount": -2, "desc": "b"},
+            {"cat": "taxes", "sub": None, "amount": -3, "desc": "c"}]
+    dup = next(a for a in detect_anomalies(txns) if a["type"] == "duplicate")
+    names = {i["name"] for i in dup["items"]}
+    assert names == {"taxes", "Taxes"}
+    # most-used variant is suggested as the merge target ('taxes' has 2)
+    assert dup["items"][0]["name"] == "taxes"
+
+
+def test_anomaly_cross_level():
+    txns = [{"cat": "household", "sub": "renovation", "amount": -1, "desc": "a"},
+            {"cat": "transfer", "sub": "household", "amount": -2, "desc": "b"}]
+    cross = [a for a in detect_anomalies(txns) if a["type"] == "cross_level"]
+    assert len(cross) == 1 and cross[0]["items"][0]["name"] == "household"
+
+
+def test_anomaly_singleton():
+    txns = [{"cat": "clothes", "sub": None, "amount": -1, "desc": "a"},
+            {"cat": "food", "sub": None, "amount": -2, "desc": "b"},
+            {"cat": "food", "sub": None, "amount": -3, "desc": "c"}]
+    s = next(a for a in detect_anomalies(txns) if a["type"] == "singleton")
+    assert [i["name"] for i in s["items"]] == ["clothes"]
+
+
+def test_anomaly_outlier():
+    # a cluster around ~30 plus one 5000 charge in the same category
+    txns = [{"cat": "shop", "sub": None, "amount": -a, "desc": f"t{a}"}
+            for a in (28, 31, 29, 33, 30)]
+    txns.append({"cat": "shop", "sub": None, "amount": -5000, "desc": "big"})
+    out = next(a for a in detect_anomalies(txns) if a["type"] == "outlier")
+    assert any(abs(i["amount"]) == 5000 for i in out["items"])
+
+
+def test_anomaly_none_when_clean():
+    txns = [{"cat": "food", "sub": "lunch", "amount": -12, "desc": "a"},
+            {"cat": "food", "sub": "lunch", "amount": -14, "desc": "b"},
+            {"cat": "rent", "sub": None, "amount": -1000, "desc": "c"},
+            {"cat": "rent", "sub": None, "amount": -1000, "desc": "d"}]
+    assert detect_anomalies(txns) == []
+
+
+def test_anomaly_ignores_uncategorized():
+    txns = [{"cat": "Uncategorized", "sub": None, "amount": -1, "desc": "a"}]
+    assert detect_anomalies(txns) == []
