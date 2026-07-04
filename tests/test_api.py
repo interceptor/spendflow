@@ -54,6 +54,47 @@ def test_manual_tag_survives_rule_reapply(client):
     assert (t["cat"], t["sub"], t["source"]) == ("Travel", "Holiday", "manual")
 
 
+def test_uncategorized_carries_merchant_and_suggestion(client):
+    client.post("/api/import/txns", json=TXNS)
+    groups = client.get("/api/uncategorized").json()
+    migros = next(g for g in groups if "MIGROS" in g["merchant"])
+    assert migros["n"] == 2                       # both MIGROS rows grouped by merchant
+    assert migros["suggest"]["cat"] == "Groceries"  # seed guess
+    assert migros["suggest"]["source"] == "seed"
+
+
+def test_suggestion_learns_from_prior_tag(client):
+    # Two different merchants that share no seed category; tag one manually,
+    # then a second txn of the SAME merchant must inherit it as a 'learned' hint.
+    client.post("/api/import/txns", json=[
+        {"date": "2026-06-01", "desc": "Zahlung Bob's Widgets | 8004 Zürich", "amount": -10},
+        {"date": "2026-06-09", "desc": "Zahlung Bob's Widgets | 8004 Zürich", "amount": -20},
+    ])
+    txns = client.get("/api/txns").json()
+    assert txns[0]["merchant"] == txns[1]["merchant"] == "Bob's Widgets"
+    client.post("/api/assign", json={"ids": [txns[0]["id"]], "cat": "Hobbies"})
+    grp = next(g for g in client.get("/api/uncategorized").json()
+               if g["merchant"] == "Bob's Widgets")
+    assert grp["n"] == 1                                   # the untagged one remains
+    assert (grp["suggest"]["cat"], grp["suggest"]["source"]) == ("Hobbies", "learned")
+
+
+def test_migration_backfills_merchant(client, tmp_path):
+    # Simulate a pre-merchant DB: insert a row without the column populated,
+    # reload the app (runs init/migration), and confirm the token is backfilled.
+    import sqlite3, importlib
+    from spendflow import app as app_mod
+    con = sqlite3.connect(tmp_path / "spendflow.db")
+    con.execute("UPDATE txn SET merchant=NULL")   # table exists from fixture startup
+    con.execute("INSERT INTO txn (hash, amount, desc, merchant) VALUES ('h1', -5, "
+                "'Einkauf Coop Pronto | 01.01.2026, Debit', NULL)")
+    con.commit(); con.close()
+    importlib.reload(app_mod)
+    with TestClient(app_mod.app) as c:
+        row = next(t for t in c.get("/api/txns").json() if t["hash"] == "h1")
+        assert row["merchant"] == "Coop Pronto"
+
+
 def test_assign_validates(client):
     assert client.post("/api/assign", json={"cat": "X"}).status_code == 422
     assert client.post("/api/assign",

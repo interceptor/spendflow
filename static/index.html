@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SpendFlow</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+<script src="/static/vendor/papaparse.min.js"></script>
+<script src="/static/vendor/plotly.min.js"></script>
 <style>
   :root {
     --bg:#0f1317; --panel:#161c22; --panel2:#1c242c; --line:#26313b;
@@ -66,6 +66,17 @@
   th { color:var(--muted); font-weight:500; text-transform:uppercase; font-size:10.5px; letter-spacing:.07em; }
   td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   #uncatBody tr:hover { background:var(--panel2); }
+  .mtok { font-weight:550; }
+  .sugg { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10px;
+          background:rgba(88,201,185,.14); color:var(--accent); font-size:11px; white-space:nowrap; }
+  .sugg.learned { background:rgba(106,159,224,.16); color:#6a9fe0; }
+  .sugg.learned::before { content:"★ "; }
+  td.tagcell { white-space:nowrap; text-align:right; }
+  td.tagcell button { margin-left:5px; }
+  #rulesList .rrow { display:flex; justify-content:space-between; gap:12px; padding:4px 0;
+                     border-bottom:1px solid var(--line); }
+  #rulesList .rx { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #rulesList .rcat { color:var(--accent); white-space:nowrap; }
 
   /* guided tagging panel */
   #guide { display:none; background:var(--panel2); border:1px solid var(--accent);
@@ -142,10 +153,15 @@
       </table>
     </div>
     <div class="card" id="rulesCard">
-      <h3>Rules <span style="color:var(--muted);font-weight:400">· stored in data/rules.json</span></h3>
-      <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments</div>
-      <textarea id="rules" class="mono" spellcheck="false"></textarea>
-      <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
+      <h3>Rules <span id="rulesCount" style="color:var(--muted);font-weight:400"></span>
+        <button class="small" id="toggleRaw" style="float:right">raw edit</button></h3>
+      <div class="hint">Rules are built by tagging above. Expand raw edit only if you need to hand-tweak.</div>
+      <div id="rawWrap" style="display:none">
+        <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments · stored in data/rules.json</div>
+        <textarea id="rules" class="mono" spellcheck="false"></textarea>
+        <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
+      </div>
+      <div id="rulesList" class="mono" style="font-size:12.5px"></div>
     </div>
   </div>
 </div>
@@ -367,26 +383,49 @@ async function loadUncategorized() {
   const totalOut = -txns.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
   const unSum = groups.reduce((s, g) => s + g.total, 0);
   $('uncatPct').textContent = totalOut ? `· ${(100 * unSum / totalOut).toFixed(1)}% of expenses` : '';
-  $('uncatBody').innerHTML = groups.map((g, i) =>
-    `<tr><td>${g.desc.replace(/</g, '&lt;')}</td><td class="num">${g.n}</td>
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('uncatBody').innerHTML = groups.map((g, i) => {
+    const s = g.suggest || {};
+    // learned hints (from your own past tags) marked distinctly from static seed guesses
+    const cls = s.source === 'learned' ? 'sugg learned' : 'sugg';
+    const tip = s.source === 'learned' ? 'learned from your tags' : 'suggested category';
+    const guess = s.cat ? `<span class="${cls}" title="${tip}">${esc(s.cat)}${s.sub ? ' · ' + esc(s.sub) : ''}</span>` : '';
+    const name = esc(g.merchant || g.desc);
+    return `<tr><td><span class="mtok">${name}</span>${guess}</td><td class="num">${g.n}</td>
      <td class="num">${g.total.toLocaleString('de-CH', {minimumFractionDigits: 2})}</td>
-     <td><button class="small" data-i="${i}">tag</button></td></tr>`
-  ).join('') || '<tr><td colspan="4" style="color:var(--muted)">everything categorized 🎉</td></tr>';
-  $('uncatBody').querySelectorAll('button').forEach(b => b.onclick = () => openGuide(groups[+b.dataset.i]));
+     <td class="tagcell">${s.cat ? `<button class="small primary" data-accept="${i}" title="create rule: ${esc(s.match)} → ${esc(s.cat)}">✓ ${esc(s.cat)}</button>` : ''}
+       <button class="small" data-i="${i}">edit</button></td></tr>`;
+  }).join('') || '<tr><td colspan="4" style="color:var(--muted)">everything categorized 🎉</td></tr>';
+  $('uncatBody').querySelectorAll('button[data-i]').forEach(b => b.onclick = () => openGuide(groups[+b.dataset.i]));
+  $('uncatBody').querySelectorAll('button[data-accept]').forEach(b => b.onclick = () => acceptSuggestion(groups[+b.dataset.accept]));
 
   const cats = await api('/api/categories');
   $('catList').innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join('');
   $('subList').innerHTML = [...new Set(Object.values(cats).flat())].map(s => `<option>${s}</option>`).join('');
 }
 
+// One-click: accept the heuristic suggestion as a rule, no dialog.
+async function acceptSuggestion(g) {
+  const s = g.suggest || {};
+  if (!s.match || !s.cat) return openGuide(g);
+  try {
+    await api('/api/assign', {method: 'POST',
+      body: JSON.stringify({match: s.match, cat: s.cat, sub: s.sub || null})});
+    toast(`Rule saved: ${s.token || s.match} → ${s.cat}`);
+    refresh();
+  } catch (err) { alert(err.message); }
+}
+
 function openGuide(g) {
   gGroup = g;
+  const s = g.suggest || {};
   $('guide').style.display = 'block';
-  $('gDesc').textContent = `${g.desc} — ${g.n}× / ${g.total.toFixed(2)} ${currency}`;
-  // exact-match default, regex-escaped; user can loosen it (e.g. "migros" instead of full text)
-  $('gMatch').value = g.desc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  $('gCat').value = ''; $('gSub').value = '';
-  $('gCat').focus();
+  $('gDesc').textContent = `${g.merchant || g.desc} — ${g.n}× / ${g.total.toFixed(2)} ${currency}`;
+  // Pre-fill from the suggestion: merchant-token regex + category guess. Falls back
+  // to a full-text exact match (regex-escaped) when the heuristic found nothing.
+  $('gMatch').value = s.match || g.desc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  $('gCat').value = s.cat || ''; $('gSub').value = s.sub || '';
+  ($('gCat').value ? $('gSub') : $('gCat')).focus();
 }
 $('gCancel').onclick = () => $('guide').style.display = 'none';
 $('gApply').onclick = async () => {
@@ -394,7 +433,8 @@ $('gApply').onclick = async () => {
   const mode = document.querySelector('input[name=gMode]:checked').value;
   const body = {cat: $('gCat').value.trim(), sub: $('gSub').value.trim() || null};
   if (mode === 'rule') body.match = $('gMatch').value;
-  else body.ids = txns.filter(t => t.desc === gGroup.desc && t.cat === 'Uncategorized').map(t => t.id);
+  // manual mode: tag every uncategorized txn sharing this merchant token
+  else body.ids = txns.filter(t => t.merchant === gGroup.merchant && t.cat === 'Uncategorized').map(t => t.id);
   try {
     await api('/api/assign', {method: 'POST', body: JSON.stringify(body)});
     $('guide').style.display = 'none';
@@ -407,7 +447,19 @@ $('gApply').onclick = async () => {
 async function loadRules() {
   const rules = await api('/api/rules');
   $('rules').value = rules.map(r => [r.match, r.cat, r.sub].filter(Boolean).join(' ; ')).join('\n');
+  $('rulesCount').textContent = `· ${rules.length} rule${rules.length === 1 ? '' : 's'}`;
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('rulesList').innerHTML = rules.length
+    ? rules.map(r => `<div class="rrow"><span class="rx">${esc(r.match)}</span>
+        <span class="rcat">${esc(r.cat)}${r.sub ? ' · ' + esc(r.sub) : ''}</span></div>`).join('')
+    : '<span style="color:var(--muted)">No rules yet — tag uncategorized spend above to build them.</span>';
 }
+$('toggleRaw').onclick = () => {
+  const w = $('rawWrap'), open = w.style.display === 'none';
+  w.style.display = open ? 'block' : 'none';
+  $('rulesList').style.display = open ? 'none' : 'block';
+  $('toggleRaw').textContent = open ? 'done' : 'raw edit';
+};
 $('saveRules').onclick = async () => {
   const rules = $('rules').value.split('\n')
     .map(l => l.trim()).filter(l => l && !l.startsWith('#'))

@@ -101,10 +101,133 @@ def categorize(desc: str, compiled: list[tuple]) -> tuple[str, str | None]:
     return "Uncategorized", None
 
 
+# ---------- rule suggestion (local heuristic; no network) ----------
+# Statement descriptions look like:
+#   "Einkauf Migros MM Delémont | 22.05.2026, 15:33, Debit Mastercard-Nr. 557452xxxxxx2383"
+#   "Zahlung Sunrise GmbH | Postfach, 8050 Zurich | Bezahlt für: Michael Rudiger"
+# We want a stable merchant token ("Migros MM Delémont", "Sunrise GmbH") to build a
+# regex suggestion from, and a rough category guess. Both are just starting points
+# the user edits in the UI.
+
+# Leading transaction-type verbs Raiffeisen prints before the merchant name.
+_TXN_PREFIX = re.compile(
+    r"^(?:Einkauf|Zahlung|Gutschrift|Dauerauftrag(?:\s+Ausland)?|Bancomat\s+Bezug|"
+    r"Übertrag(?:\s+auf)?|Gebühr(?:enbelastung)?|Paketpreis)\s+", re.I)
+# Noise tokens that are never part of a merchant name.
+_NOISE = re.compile(
+    r"\b(?:GmbH|AG|SARL|Sàrl|SA|Merchant|Debit|Mastercard-Nr\.?|Kreditkarte)\b", re.I)
+
+# Continuation segments (after the first ' | ') that are NOT a purpose note:
+#   date/card line  "13.05.2026, 12:24, Debit Mastercard-Nr. 5xx"
+#   address line    "Route de Bâle 4, 2805 Soyhières"  (has a 4-5 digit postcode)
+#   "Bezahlt für: X" / SEPA/FX detail lines
+_NOTE_REJECT = re.compile(
+    r"^\d{2}\.\d{2}\.\d{2,4}[,\s]"           # leading date/time
+    r"|\b\d{4,5}\b"                          # postal code -> address
+    r"|Bezahlt für|Umrechnungskurs|SEPA|IBAN|CH\d{2}\b", re.I)
+
+
+def _purpose_note(segments: list[str]) -> str | None:
+    """The trailing free-text reference ('Savings Mia', 'MIETZINS WOHNUNG') that
+    distinguishes same-counterparty transactions, or None if the tail is just
+    date/card/address noise. Only the last segment is considered."""
+    if len(segments) < 2:
+        return None
+    tail = segments[-1].strip()
+    if not tail or _NOTE_REJECT.search(tail):
+        return None
+    return tail
+
+
+def _merchant_name(desc: str) -> str:
+    """The cleaned merchant name from the first segment (no note appended)."""
+    head = desc.split(" | ", 1)[0].strip()
+    s = _TXN_PREFIX.sub("", head)
+    s = _NOISE.sub("", s)
+    s = re.sub(r"\s{2,}", " ", s).strip(" .,-")
+    return s or head
+
+
+def merchant_token(desc: str) -> str:
+    """Best-effort merchant name from a raw statement description.
+
+    Takes the first ' | ' segment (the rest is date/card/address continuation),
+    strips the leading transaction verb and trailing corporate/noise tokens. If a
+    trailing purpose note is present (e.g. 'Savings Mia'), it is appended as
+    '<merchant> · <note>' so earmarked transfers to the same person stay distinct.
+    Falls back to the trimmed first segment if nothing usable remains.
+    """
+    name = _merchant_name(desc)
+    note = _purpose_note(desc.split(" | "))
+    return f"{name} · {note}" if note else name
+
+
+def merchant_regex(desc: str) -> str:
+    """Regex that matches this merchant in a raw description. When a purpose note
+    distinguishes the transaction, require BOTH name and note (so 'Savings Mia' and
+    a plain payment to the same person get separate rules). Matches the desc, not
+    the ' · '-joined display token."""
+    name = _merchant_name(desc)
+    note = _purpose_note(desc.split(" | "))
+    if note:
+        return rf"{re.escape(name)}.*{re.escape(note)}"
+    return re.escape(name)
+
+
+# Keyword -> (category, subcategory). First hit wins; matched case-insensitively
+# against the full description. Deliberately small and editable.
+_CATEGORY_HINTS: list[tuple[str, str, str | None]] = [
+    (r"salarzahlung|centris", "Income", "Salary"),
+    (r"mietzins", "Income", "Rent received"),
+    (r"verzinsung anteilschein", "Income", "Interest"),
+    (r"migros|aldi|aligro|landi|lebensmittel|mini lä|pakhäuser|denner|coop", "Groceries", None),
+    (r"selecta|station-shop|belleri", "Groceries", "Convenience"),
+    (r"phusila|giardino|perrest|sumup|restaurant|thai", "Dining", None),
+    (r"apotheke|pharmac", "Health", "Pharmacy"),
+    (r"world of games|kino|cinema", "Leisure", None),
+    (r"sunrise|wingo|swisscom|salt", "Telecom", None),
+    (r"bkw|energie|elektriz|strom", "Utilities", "Electricity"),
+    (r"rechtsschutz|assura|helsana|css |versicherung|insurance", "Insurance", None),
+    (r"contributions|trésorerie|tresorerie|canton du jura|rcju|steuer|impôt|impot", "Taxes", None),
+    (r"tea building|shoreditch|6th floor", "Housing", "Rent"),
+    (r"sparkonto|geschenksparkonto|savings", "Savings", None),
+    (r"sepa|money elyes|dauerauftrag ausland", "Transfers", "International"),
+    (r"dauerauftrag|bancomat|bezug", "Transfers", "Cash/Standing order"),
+    (r"kontoführung|paketpreis|gebühr|memberplus|sollzins|abschlussbetreffnis|"
+     r"saldierung|saldovortrag", "Bank fees", None),
+]
+_HINTS_COMPILED = [(re.compile(p, re.I), c, s) for p, c, s in _CATEGORY_HINTS]
+
+
+def suggest_category(desc: str) -> tuple[str | None, str | None]:
+    """Guess (cat, sub) for a description, or (None, None) if nothing matches."""
+    for rx, cat, sub in _HINTS_COMPILED:
+        if rx.search(desc):
+            return cat, sub
+    return None, None
+
+
+def suggest_rule(desc: str, learned: tuple[str, str | None] | None = None) -> dict:
+    """A ready-to-edit rule proposal: regex from merchant token + category guess.
+
+    `learned` (cat, sub) — e.g. how the user previously tagged this same merchant —
+    wins over the static seed map, so suggestions improve as the user categorizes.
+    `source` records where the guess came from: 'learned' | 'seed' | None.
+    """
+    token = merchant_token(desc)
+    if learned and learned[0]:
+        cat, sub, source = learned[0], learned[1], "learned"
+    else:
+        cat, sub = suggest_category(desc)
+        source = "seed" if cat else None
+    return {"match": merchant_regex(desc), "token": token, "cat": cat, "sub": sub, "source": source}
+
+
 # ---------- Raiffeisen PDF statements (Kontoauszug) ----------
-_MONEY = r"\d{1,3}(?:'\d{3})*\.\d{2}"
-_ENTRY = re.compile(rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+(.+?)\s+({_MONEY})\s+({_MONEY})$")
-_OPENING = re.compile(rf"^\d{{2}}\.\d{{2}}\.\d{{2}}\s+Saldovortrag\s+({_MONEY})$")
+_MONEY = r"\d{1,3}(?:'\d{3})*\.\d{2}"     # amount column: always unsigned
+_BAL = rf"-?{_MONEY}"                     # Saldo column: negative when overdrawn
+_ENTRY = re.compile(rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+(.+?)\s+({_MONEY})\s+({_BAL})$")
+_OPENING = re.compile(rf"^\d{{2}}\.\d{{2}}\.\d{{2}}\s+Saldovortrag\s+({_BAL})$")
 _TABLE_END = re.compile(rf"^(Umsatz|Übertrag)\s+{_MONEY}")  # summary rows, no date
 _VALUTA = re.compile(r"^\(\d{2}\.\d{2}\.\d{2}\)\s*")
 

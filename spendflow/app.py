@@ -11,7 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .core import categorize, compile_rules, parse_camt, parse_raiffeisen, txn_hash
+from .core import (categorize, compile_rules, merchant_token, parse_camt,
+                   parse_raiffeisen, suggest_rule, txn_hash)
 
 DATA_DIR = Path(os.environ.get("SPENDFLOW_DATA", "data"))
 DB_PATH = DATA_DIR / "spendflow.db"
@@ -33,7 +34,15 @@ def init() -> None:
             date TEXT, amount REAL NOT NULL, desc TEXT NOT NULL,
             currency TEXT DEFAULT 'CHF',
             cat TEXT DEFAULT 'Uncategorized', sub TEXT,
-            source TEXT DEFAULT 'rule')""")  # source: 'rule' | 'manual'
+            merchant TEXT,                        -- tokenized at import; stable grouping key
+            source TEXT DEFAULT 'rule')""")       # source: 'rule' | 'manual'
+        # Migration: add merchant column + backfill for DBs created before it existed.
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(txn)")}
+        if "merchant" not in cols:
+            con.execute("ALTER TABLE txn ADD COLUMN merchant TEXT")
+        for r in con.execute("SELECT id, desc FROM txn WHERE merchant IS NULL").fetchall():
+            con.execute("UPDATE txn SET merchant=? WHERE id=?",
+                        (merchant_token(r["desc"]), r["id"]))
     if not RULES_PATH.exists():
         RULES_PATH.write_text("[]")
 
@@ -88,8 +97,9 @@ def import_txns(txns: list[TxnIn]):
         for t in txns:
             h = txn_hash(t.date, t.amount, t.desc)
             cur = con.execute(
-                "INSERT OR IGNORE INTO txn (hash, date, amount, desc, currency) VALUES (?,?,?,?,?)",
-                (h, t.date, t.amount, t.desc, t.currency))
+                "INSERT OR IGNORE INTO txn (hash, date, amount, desc, currency, merchant) "
+                "VALUES (?,?,?,?,?,?)",
+                (h, t.date, t.amount, t.desc, t.currency, merchant_token(t.desc)))
             ins += cur.rowcount
         apply_rules(con)
     return {"imported": ins, "duplicates": len(txns) - ins}
@@ -129,13 +139,30 @@ def get_txns(month: str | None = None):
 
 @app.get("/api/uncategorized")
 def uncategorized():
-    """Expense descriptions still unmatched, grouped, biggest first - feeds guided tagging."""
+    """Unmatched expenses grouped by merchant token, biggest first - feeds guided tagging.
+
+    Each group carries a `suggest` block (regex + category guess). The guess is
+    learned from how the same merchant was categorized elsewhere (manual tags
+    preferred), falling back to a static seed map. All local; no data leaves the
+    machine. A representative `desc` is kept so the regex/token stay meaningful."""
     with db() as con:
+        # What each merchant has been categorized as elsewhere -> learned hint.
+        # Prefer manual tags (source='manual') over rule-derived; most-frequent wins.
+        learned: dict[str, tuple[str, str | None]] = {}
+        seen = con.execute("""
+            SELECT merchant, cat, sub, source, COUNT(*) n
+            FROM txn WHERE cat != 'Uncategorized' AND merchant IS NOT NULL
+            GROUP BY merchant, cat, sub
+            ORDER BY (source='manual') DESC, n DESC""").fetchall()
+        for r in seen:
+            learned.setdefault(r["merchant"], (r["cat"], r["sub"]))
+
         rows = con.execute("""
-            SELECT desc, COUNT(*) n, SUM(ABS(amount)) total
-            FROM txn WHERE cat='Uncategorized' AND amount < 0
-            GROUP BY desc ORDER BY total DESC LIMIT 200""").fetchall()
-    return [dict(r) for r in rows]
+            SELECT merchant, MIN(desc) desc, COUNT(*) n, SUM(ABS(amount)) total
+            FROM txn WHERE cat='Uncategorized' AND amount < 0 AND merchant IS NOT NULL
+            GROUP BY merchant ORDER BY total DESC LIMIT 200""").fetchall()
+    return [dict(r, suggest=suggest_rule(r["desc"], learned.get(r["merchant"])))
+            for r in rows]
 
 
 @app.get("/api/stats/monthly")
