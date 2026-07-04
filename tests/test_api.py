@@ -129,6 +129,41 @@ def test_assign_uncategorized_untags_not_pins(client):
     assert t["cat"] == "Food"
 
 
+CC_TEXT = """Datum Valuta Details Währung Betrag Betrag in CHF
+27.03.26 13.03.26 Ihre Zahlung - Danke 100.00-
+10.03.26 13.03.26 PAYPAL *TEMU, 123 IE CHF 60.00 60.00
+Warenhäuser
+13.03.26 16.03.26 Lidl Delemont, CH 40.00
+Supermärkte, Lebensmittel
+Total Karte Visa Gold 4763 14XX XXXX 0730 100.00
+"""
+
+
+def test_cc_reconciles_against_bank_debit(client):
+    from spendflow import app as app_mod
+    # a bank debit that paid the Viseca bill (100.00) already exists
+    client.post("/api/import/txns", json=[
+        {"date": "2026-04-27", "desc": "Zahlung Viseca Payment Services AG", "amount": -100.00},
+        {"date": "2026-04-01", "desc": "Einkauf Coop", "amount": -25.00}])
+    res = app_mod._import_cc(CC_TEXT)
+    assert res["reconciled"] is True and res["imported"] == 2
+
+    txns = client.get("/api/txns").json()
+    parent = next(t for t in txns if "Viseca" in t["desc"])
+    kids = [t for t in txns if t["parent_id"] == parent["id"]]
+    assert parent["reconciled"] == 1
+    assert len(kids) == 2
+    assert round(sum(t["amount"] for t in kids), 2) == parent["amount"]  # no double-count
+
+    # reconciled parent is excluded from monthly stats; children (dated to when the
+    # purchases happened, March) are counted in their own month instead.
+    stats = client.get("/api/stats/monthly").json()
+    apr = sum(r["spent"] for r in stats if r["month"] == "2026-04")
+    mar = sum(r["spent"] for r in stats if r["month"] == "2026-03")
+    assert round(apr, 2) == 25.00   # only Coop; the 100 Viseca lump-sum is excluded
+    assert round(mar, 2) == 100.00  # the CC line items land in March, not doubled
+
+
 def test_anomalies_endpoint(client):
     client.post("/api/import/txns", json=TXNS)
     # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding

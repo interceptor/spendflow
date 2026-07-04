@@ -314,3 +314,46 @@ def test_anomaly_none_when_clean():
 def test_anomaly_ignores_uncategorized():
     txns = [{"cat": "Uncategorized", "sub": None, "amount": -1, "desc": "a"}]
     assert detect_anomalies(txns) == []
+
+
+# ---------- Viseca credit-card parser ----------
+from spendflow.core import parse_viseca
+
+VISECA = """Datum Valuta Details Währung Betrag Betrag in CHF
+12.03.26 Totalbetrag letzte Abrechnung 1'520.95
+27.03.26 13.03.26 Ihre Zahlung - Danke 1'520.95-
+10.03.26 13.03.26 PAYPAL *TEMU, 35314369001 IE CHF 32.67 33.15
+Warenhäuser
+Bearbeitungsgebühr 1.5% CHF 0.50
+13.03.26 16.03.26 Maxima Beauty GmbH, Delemont CH 400.00
+Kosmetika, Parfümerien
+21.03.26 23.03.26 CLAUDE.AI SUBSCRIPTION, ANTHROPIC.COM US USD 21.62 17.60
+Computersoftware
+Umrechnungskurs 0.8023 vom 21.03.26 CHF 17.35
+Bearbeitungsgebühr 1.5% CHF 0.25
+Total Karte Visa Gold 4763 14XX XXXX 0730 450.75
+"""
+
+
+def test_parse_viseca():
+    txns, total = parse_viseca(VISECA)
+    assert total == 450.75
+    assert [round(t["amount"], 2) for t in txns] == [-33.15, -400.00, -17.60]
+    # fee is already included in the CHF column -> not added; items sum to total
+    assert round(-sum(t["amount"] for t in txns), 2) == total
+    # previous-bill payment line is skipped
+    assert not any("Ihre Zahlung" in t["desc"] for t in txns)
+    # merchant-category line appended; foreign currency kept
+    assert txns[0]["desc"] == "PAYPAL *TEMU, 35314369001 IE | CHF 32.67 | Warenhäuser"
+    assert txns[2]["desc"].startswith("CLAUDE.AI SUBSCRIPTION")
+
+
+def test_parse_viseca_total_mismatch_raises():
+    broken = VISECA.replace("450.75", "999.99")
+    with pytest.raises(ValueError, match="total mismatch"):
+        parse_viseca(broken)
+
+
+def test_parse_viseca_rejects_other_docs():
+    with pytest.raises(ValueError):
+        parse_viseca("Just some random text, not a statement.")

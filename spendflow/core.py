@@ -369,3 +369,58 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
                 "items": flagged})
 
     return out
+
+
+# ---------- Viseca (Raiffeisen) credit-card statements ----------
+_VISECA_TXN = re.compile(
+    rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+\d{{2}}\.\d{{2}}\.\d{{2}}\s+(.+?)"
+    rf"(?:\s+([A-Z]{{3}})\s+({_MONEY}))?"       # optional foreign currency + amount
+    rf"\s+({_MONEY})$")
+_VISECA_TOTAL = re.compile(rf"^Total Karte .*?({_MONEY})$")
+_VISECA_PAYMENT = re.compile(r"Ihre Zahlung")   # previous bill's payment, not a purchase
+_VISECA_NOISE = re.compile(
+    r"^(Übertrag|Zwischensumme|Total|Seite|Herausgegeben|Ihrer Raiffeisen|"
+    r"Viseca|Hagenholz|\d{4,5} |CH-|Datum |Karten|\d{4} \d{2}XX|Globallimite|"
+    r"Fälliger|Zahlung über|Ab dem|Abtretung|Services SA|P\.P\.|Response|"
+    r"Kundenservice|Telefon|Herr|Michael|Route|Abrechnung|Zahlbar|PayNet|"
+    r"Kontoinhaber|Bearbeitungsgebühr|Umrechnungskurs)")
+
+
+def parse_viseca(text: str) -> tuple[list[dict], float | None]:
+    """Viseca credit-card statement (pdfplumber text) -> (purchases, total).
+
+    One negative txn per purchase. The 'Betrag in CHF' column already includes the
+    1.5% Bearbeitungsgebühr, so that fee line is informational and ignored (folding
+    it would double-count). The single merchant-category line after each purchase
+    (e.g. 'Warenhäuser') is appended to the description. `total` is the stated
+    'Total Karte', used to reconcile against the lump-sum bank debit; the item sum
+    is checked against it as an integrity guard.
+    """
+    txns: list[dict] = []
+    total: float | None = None
+    current: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if m := _VISECA_TOTAL.match(line):
+            total, current = parse_amount(m.group(1)), None
+        elif _VISECA_PAYMENT.search(line):
+            current = None
+        elif (m := _VISECA_TXN.match(line)) and not _VISECA_NOISE.match(line):
+            date, details, fccy, famt, chf = m.groups()
+            desc = details.strip() + (f" | {fccy} {famt}" if fccy else "")
+            current = {"date": parse_date(date), "desc": desc,
+                       "amount": -parse_amount(chf), "currency": "CHF"}
+            txns.append(current)
+        elif current is not None and not _VISECA_NOISE.match(line):
+            current["desc"] += " | " + line   # merchant-category tag
+            current = None                    # only the immediate next line counts
+
+    if not txns:
+        raise ValueError("No credit-card transactions found - not a Viseca statement?")
+    if total is not None:
+        s = round(-sum(t["amount"] for t in txns), 2)
+        if abs(s - total) > 0.05:
+            raise ValueError(f"CC total mismatch: items sum {s} != stated {total}")
+    return txns, total

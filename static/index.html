@@ -131,7 +131,7 @@
 <div class="wrap">
   <div id="drop">
     <b>Drop a bank statement</b> or click to browse — re-imports are deduplicated
-    <div class="formats mono">.pdf (Raiffeisen) · .csv · camt.053 .xml</div>
+    <div class="formats mono">.pdf (Raiffeisen account or Viseca credit-card) · .csv · camt.053 .xml</div>
     <input type="file" id="file" accept=".csv,.xml,.txt,.pdf" hidden>
   </div>
 
@@ -266,7 +266,8 @@ async function loadFile(file) {
       const r = await fetch('/api/import/pdf', {method: 'POST', body: fd});
       if (!r.ok) throw new Error((await r.json()).detail);
       const res = await r.json();
-      toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates`);
+      const recon = res.reconciled ? ' · reconciled to bank debit' : '';
+      toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates${recon}`);
       refresh();
     } catch (err) { alert(err.message); }
     return;
@@ -341,7 +342,10 @@ async function refresh() {
 
 function render() {
   const month = $('monthSel').value;
-  const list = month ? txns.filter(t => (t.date || '').startsWith(month)) : txns;
+  // reconciled lump-sums (e.g. a credit-card bill replaced by its line items) are
+  // excluded from all spend math so the itemized children aren't double-counted.
+  const active = txns.filter(t => !t.reconciled);
+  const list = month ? active.filter(t => (t.date || '').startsWith(month)) : active;
   const inc = list.filter(t => t.amount > 0), exp = list.filter(t => t.amount < 0);
   const totalIn = inc.reduce((s, t) => s + t.amount, 0);
   const totalOut = -exp.reduce((s, t) => s + t.amount, 0);
