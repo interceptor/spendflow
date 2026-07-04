@@ -181,6 +181,14 @@ def test_merchant_regex_requires_note_when_present():
     assert suggest_rule(SAVINGS)["match"] == rx_sav
 
 
+def test_merchant_regex_tolerates_stripped_interior_noise():
+    # regression: 'Merchant' is stripped from the token, so a literal 'Selecta ven'
+    # would never match the real description. The regex must still match it.
+    desc = "Einkauf Selecta Merchant ven | 07.05.2026, 12:01, Debit Mastercard-Nr. 5xx"
+    assert merchant_token(desc) == "Selecta ven"     # display token drops 'Merchant'
+    assert re.search(merchant_regex(desc), desc, re.I)  # but the rule still matches
+
+
 def test_merchant_token_fallback():
     # nothing strippable -> trimmed first segment, never empty
     assert merchant_token("Random Shop XYZ") == "Random Shop XYZ"

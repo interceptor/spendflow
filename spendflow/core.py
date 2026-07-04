@@ -162,6 +162,15 @@ def merchant_token(desc: str) -> str:
     return f"{name} · {note}" if note else name
 
 
+def _loose(text: str) -> str:
+    """Escape `text` into a regex matching its words in order, tolerating extra
+    words in between. Needed because _merchant_name strips interior noise tokens
+    (e.g. 'Selecta Merchant ven' -> name 'Selecta ven'); a literal 'Selecta ven'
+    would never match the original description. Joining words with '.*?' does."""
+    words = [re.escape(w) for w in text.split()]
+    return r".*?".join(words) if words else re.escape(text)
+
+
 def merchant_regex(desc: str) -> str:
     """Regex that matches this merchant in a raw description. When a purpose note
     distinguishes the transaction, require BOTH name and note (so 'Savings Mia' and
@@ -170,8 +179,8 @@ def merchant_regex(desc: str) -> str:
     name = _merchant_name(desc)
     note = _purpose_note(desc.split(" | "))
     if note:
-        return rf"{re.escape(name)}.*{re.escape(note)}"
-    return re.escape(name)
+        return rf"{_loose(name)}.*{_loose(note)}"
+    return _loose(name)
 
 
 # Keyword -> (category, subcategory). First hit wins; matched case-insensitively

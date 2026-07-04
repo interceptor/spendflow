@@ -95,6 +95,40 @@ def test_migration_backfills_merchant(client, tmp_path):
         assert row["merchant"] == "Coop Pronto"
 
 
+def test_uncategorized_income_kind(client):
+    client.post("/api/import/txns", json=TXNS)  # includes ACME AG LOHN income
+    inc = client.get("/api/uncategorized", params={"kind": "income"}).json()
+    exp = client.get("/api/uncategorized", params={"kind": "expense"}).json()
+    assert any("ACME" in g["merchant"] for g in inc)      # income appears under income
+    assert all(g["total"] > 0 for g in inc)
+    assert not any("ACME" in g["merchant"] for g in exp)  # and not under expenses
+
+
+def test_rule_matches_despite_stripped_interior_word(client):
+    # regression: 'Merchant' is stripped from the token; the auto-suggested rule
+    # must still match and clear the group.
+    client.post("/api/import/txns", json=[
+        {"date": "2026-06-01", "desc": "Einkauf Selecta Merchant ven | 01.06.2026, Debit", "amount": -2}])
+    g = client.get("/api/uncategorized").json()[0]
+    assert g["merchant"] == "Selecta ven"
+    client.post("/api/assign", json=g["suggest"])         # accept the suggestion as a rule
+    assert client.get("/api/uncategorized").json() == []  # group is gone
+
+
+def test_assign_uncategorized_untags_not_pins(client):
+    # assigning 'Uncategorized' must not create a manual pin immune to rules
+    client.post("/api/import/txns", json=TXNS)
+    tid = next(t["id"] for t in client.get("/api/txns").json() if "MIGROS" in t["desc"])
+    client.post("/api/assign", json={"ids": [tid], "cat": "Groceries"})   # manual pin
+    client.post("/api/assign", json={"ids": [tid], "cat": "Uncategorized"})  # untag
+    t = next(t for t in client.get("/api/txns").json() if t["id"] == tid)
+    assert (t["cat"], t["source"]) == ("Uncategorized", "rule")  # rule-controlled again
+    # a later rule can now reclassify it
+    client.post("/api/assign", json={"match": "migros", "cat": "Food"})
+    t = next(t for t in client.get("/api/txns").json() if t["id"] == tid)
+    assert t["cat"] == "Food"
+
+
 def test_assign_validates(client):
     assert client.post("/api/assign", json={"cat": "X"}).status_code == 422
     assert client.post("/api/assign",

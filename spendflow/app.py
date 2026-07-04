@@ -138,13 +138,15 @@ def get_txns(month: str | None = None):
 
 
 @app.get("/api/uncategorized")
-def uncategorized():
-    """Unmatched expenses grouped by merchant token, biggest first - feeds guided tagging.
+def uncategorized(kind: str = "expense"):
+    """Unmatched transactions grouped by merchant token, biggest first - feeds guided tagging.
 
-    Each group carries a `suggest` block (regex + category guess). The guess is
-    learned from how the same merchant was categorized elsewhere (manual tags
-    preferred), falling back to a static seed map. All local; no data leaves the
-    machine. A representative `desc` is kept so the regex/token stay meaningful."""
+    `kind` selects the flow side: 'expense' (amount < 0, default) or 'income'
+    (amount > 0), so income streams can be tagged/ruled too. Each group carries a
+    `suggest` block (regex + category guess), learned from how the same merchant
+    was categorized elsewhere (manual tags preferred), falling back to a static
+    seed map. All local; no data leaves the machine."""
+    sign = "amount > 0" if kind == "income" else "amount < 0"
     with db() as con:
         # What each merchant has been categorized as elsewhere -> learned hint.
         # Prefer manual tags (source='manual') over rule-derived; most-frequent wins.
@@ -157,9 +159,9 @@ def uncategorized():
         for r in seen:
             learned.setdefault(r["merchant"], (r["cat"], r["sub"]))
 
-        rows = con.execute("""
+        rows = con.execute(f"""
             SELECT merchant, MIN(desc) desc, COUNT(*) n, SUM(ABS(amount)) total
-            FROM txn WHERE cat='Uncategorized' AND amount < 0 AND merchant IS NOT NULL
+            FROM txn WHERE cat='Uncategorized' AND {sign} AND merchant IS NOT NULL
             GROUP BY merchant ORDER BY total DESC LIMIT 200""").fetchall()
     return [dict(r, suggest=suggest_rule(r["desc"], learned.get(r["merchant"])))
             for r in rows]
@@ -212,8 +214,15 @@ def assign(a: Assign):
             rules.append({"match": a.match, "cat": a.cat, "sub": a.sub})
             RULES_PATH.write_text(json.dumps(rules, indent=1, ensure_ascii=False))
         if a.ids:
-            con.executemany("UPDATE txn SET cat=?, sub=?, source='manual' WHERE id=?",
-                            [(a.cat, a.sub, i) for i in a.ids])
+            if a.cat == "Uncategorized":
+                # Assigning 'Uncategorized' means "untag" -> back to rule control,
+                # not a manual pin (which would be immune to rules forever).
+                con.executemany(
+                    "UPDATE txn SET cat='Uncategorized', sub=NULL, source='rule' WHERE id=?",
+                    [(i,) for i in a.ids])
+            else:
+                con.executemany("UPDATE txn SET cat=?, sub=?, source='manual' WHERE id=?",
+                                [(a.cat, a.sub, i) for i in a.ids])
         applied = apply_rules(con)
     return {"ok": True, "reapplied": applied}
 
