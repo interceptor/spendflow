@@ -1,0 +1,9 @@
+services:
+  spendflow:
+    build: .
+    container_name: spendflow
+    ports:
+      - "8321:8321"   # LAN-wide; use 127.0.0.1:8321:8321 for localhost-only
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

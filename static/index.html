@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpendFlow</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1317; --panel:#161c22; --panel2:#1c242c; --line:#26313b;
+    --text:#dde5ec; --muted:#7f90a0; --accent:#58c9b9; --neg:#e07a6a; --radius:10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mono { font-family: ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace; }
+  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; padding:18px 24px 10px; }
+  header h1 { font-size:20px; margin:0; letter-spacing:.5px; font-weight:650; }
+  header h1 span { color:var(--accent); }
+  header .sub { color:var(--muted); font-size:13px; }
+  .wrap { padding:0 24px 40px; max-width:1400px; margin:0 auto; }
+
+  #drop { border:1.5px dashed var(--line); border-radius:var(--radius); padding:26px 20px;
+          text-align:center; color:var(--muted); cursor:pointer; margin-top:8px;
+          transition:border-color .15s, background .15s; }
+  #drop.hover, #drop:hover { border-color:var(--accent); background:var(--panel); }
+  #drop b { color:var(--text); }
+  #drop .formats { font-size:12px; margin-top:4px; }
+
+  #stats { display:none; gap:12px; flex-wrap:wrap; margin:14px 0; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+          padding:10px 16px; min-width:130px; }
+  .stat .k { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .stat .v { font-size:19px; font-weight:650; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .stat .v.pos { color:var(--accent); } .stat .v.neg { color:var(--neg); }
+
+  select, button, input[type=text] {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:7px; padding:6px 10px; font:inherit; font-size:13px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#08211d; border:none; font-weight:600; }
+  button.small { padding:2px 9px; font-size:12px; }
+  label.inline { font-size:13px; color:var(--muted); display:inline-flex; gap:6px; align-items:center; }
+
+  #mapping { display:none; background:var(--panel); border:1px solid var(--line);
+             border-radius:var(--radius); padding:14px 16px; margin-top:14px; }
+  #mapping .row { display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
+  #mapping h3 { margin:0 0 10px; font-size:14px; }
+
+  #chart, #trend { width:100%; display:none; margin-top:6px; }
+
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+  @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+          padding:14px 16px; display:none; }
+  .card h3 { margin:0 0 4px; font-size:14px; }
+  .card .hint { color:var(--muted); font-size:12.5px; margin-bottom:10px; }
+  textarea#rules { width:100%; height:210px; resize:vertical; background:var(--panel2);
+                   color:var(--text); border:1px solid var(--line); border-radius:7px;
+                   padding:10px; font-size:12.5px; line-height:1.6; }
+  .card .actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; text-transform:uppercase; font-size:10.5px; letter-spacing:.07em; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #uncatBody tr:hover { background:var(--panel2); }
+
+  /* guided tagging panel */
+  #guide { display:none; background:var(--panel2); border:1px solid var(--accent);
+           border-radius:8px; padding:12px; margin-bottom:12px; }
+  #guide .g-desc { font-size:13px; margin-bottom:8px; }
+  #guide .g-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  #guide input[type=text] { min-width:160px; }
+  #toast { position:fixed; bottom:18px; right:18px; background:var(--panel2);
+           border:1px solid var(--accent); border-radius:8px; padding:9px 14px;
+           font-size:13px; opacity:0; transition:opacity .25s; pointer-events:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Spend<span>Flow</span></h1>
+  <span class="sub">local &amp; private — SQLite-backed</span>
+</header>
+
+<div class="wrap">
+  <div id="drop">
+    <b>Drop a bank statement</b> or click to browse — re-imports are deduplicated
+    <div class="formats mono">.pdf (Raiffeisen) · .csv · camt.053 .xml</div>
+    <input type="file" id="file" accept=".csv,.xml,.txt,.pdf" hidden>
+  </div>
+
+  <div id="mapping">
+    <h3>Column mapping <span style="color:var(--muted);font-weight:400">(auto-detected — adjust if wrong)</span></h3>
+    <div class="row">
+      <label class="inline">Date <select id="colDate"></select></label>
+      <label class="inline">Description <select id="colDesc"></select></label>
+      <label class="inline">Amount <select id="colAmt"></select></label>
+      <label class="inline"><input type="checkbox" id="invertSign"> invert sign</label>
+      <button class="primary" id="applyMap">Import</button>
+    </div>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><div class="k">Income</div><div class="v pos" id="sIn">–</div></div>
+    <div class="stat"><div class="k">Expenses</div><div class="v neg" id="sOut">–</div></div>
+    <div class="stat"><div class="k">Saved</div><div class="v" id="sSave">–</div></div>
+    <div class="stat"><div class="k">Savings rate</div><div class="v" id="sRate">–</div></div>
+    <div class="stat"><div class="k">Period</div><div class="v mono" id="sPeriod" style="font-size:14px;padding-top:5px">–</div></div>
+    <div class="stat" style="display:flex;align-items:center">
+      <label class="inline">Month <select id="monthSel"><option value="">all</option></select></label>
+    </div>
+  </div>
+
+  <div id="chart"></div>
+  <div id="trend"></div>
+
+  <div class="cols">
+    <div class="card" id="uncatCard">
+      <h3>Guided tagging <span id="uncatPct" style="color:var(--muted);font-weight:400"></span></h3>
+      <div class="hint">Biggest uncategorized spend first — click <b>tag</b> to create a rule or a one-off manual tag.</div>
+      <div id="guide">
+        <div class="g-desc mono" id="gDesc"></div>
+        <div class="g-row">
+          <input type="text" id="gMatch" class="mono" title="regex match">
+          <input type="text" id="gCat" list="catList" placeholder="Category">
+          <input type="text" id="gSub" list="subList" placeholder="Subcategory (optional)">
+          <datalist id="catList"></datalist><datalist id="subList"></datalist>
+        </div>
+        <div class="g-row">
+          <label class="inline"><input type="radio" name="gMode" value="rule" checked> save as rule (applies everywhere)</label>
+          <label class="inline"><input type="radio" name="gMode" value="manual"> only these transactions</label>
+          <button class="primary small" id="gApply">Apply</button>
+          <button class="small" id="gCancel">Cancel</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Description</th><th style="width:44px;text-align:right">#</th>
+                   <th style="width:100px;text-align:right">Total</th><th style="width:60px"></th></tr></thead>
+        <tbody id="uncatBody"></tbody>
+      </table>
+    </div>
+    <div class="card" id="rulesCard">
+      <h3>Rules <span style="color:var(--muted);font-weight:400">· stored in data/rules.json</span></h3>
+      <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments</div>
+      <textarea id="rules" class="mono" spellcheck="false"></textarea>
+      <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let txns = [], currency = 'CHF', csvRows = null;
+const fmt = n => n.toLocaleString('de-CH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ' + currency;
+const api = async (path, opts) => {
+  const r = await fetch(path, opts && {headers: {'Content-Type': 'application/json'}, ...opts});
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+};
+const toast = msg => {
+  const t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 2500);
+};
+
+// ---------- client-side parsing helpers (CSV mapping only; camt is parsed server-side) ----------
+function parseAmount(s) {
+  if (typeof s === 'number') return s;
+  s = String(s || '').trim().replace(/[' \u00A0]/g, '');
+  if (!s) return NaN;
+  const neg = /^-|^\(|-$/.test(s);
+  s = s.replace(/[^\d.,]/g, '');
+  const d = s.lastIndexOf('.'), c = s.lastIndexOf(',');
+  if (d > -1 && c > -1) s = c > d ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (c > -1) s = (s.length - c <= 3) ? s.replace(',', '.') : s.replace(/,/g, '');
+  const v = parseFloat(s);
+  return neg ? -v : v;
+}
+function parseDate(s) {
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[0];
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (m) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return null;
+}
+
+// ---------- file import ----------
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('hover'); };
+drop.ondragleave = () => drop.classList.remove('hover');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('hover'); loadFile(e.dataTransfer.files[0]); };
+$('file').onchange = e => loadFile(e.target.files[0]);
+
+async function loadFile(file) {
+  if (!file) return;
+  if (/\.pdf$/i.test(file.name)) {
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/import/pdf', {method: 'POST', body: fd});
+      if (!r.ok) throw new Error((await r.json()).detail);
+      const res = await r.json();
+      toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates`);
+      refresh();
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const text = reader.result;
+    try {
+      if (/^\s*<\?xml|<Document/i.test(text)) {
+        const res = await api('/api/import/camt', {method: 'POST', body: JSON.stringify({xml: text})});
+        toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates`);
+        refresh();
+      } else {
+        const res = Papa.parse(text.replace(/^\uFEFF/, ''), {header: true, skipEmptyLines: true});
+        if (!res.data.length) throw new Error('Empty or unparseable CSV');
+        showMapping(res.data);
+      }
+    } catch (err) { alert(err.message); }
+  };
+  reader.readAsText(file);
+}
+
+function guessColumns(rows) {
+  const headers = Object.keys(rows[0]), sample = rows.slice(0, 50);
+  const score = fn => headers.map(h => sample.filter(r => fn(r[h])).length);
+  const dS = score(v => !!parseDate(v));
+  const aS = score(v => Number.isFinite(parseAmount(v)) && /\d/.test(String(v)));
+  const tS = headers.map((h, i) =>
+    sample.reduce((s, r) => s + String(r[h] || '').length, 0) - 1000 * (dS[i] > 25));
+  const best = arr => headers[arr.indexOf(Math.max(...arr))];
+  const hinted = headers.find(h => /betrag|amount|montant|importo/i.test(h));
+  return {date: best(dS), desc: best(tS), amt: hinted || best(aS)};
+}
+function showMapping(rows) {
+  csvRows = rows;
+  const headers = Object.keys(rows[0]), g = guessColumns(rows);
+  for (const [sel, v] of [['colDate', g.date], ['colDesc', g.desc], ['colAmt', g.amt]])
+    $(sel).innerHTML = headers.map(h => `<option${h === v ? ' selected' : ''}>${h}</option>`).join('');
+  $('mapping').style.display = 'block';
+}
+$('applyMap').onclick = async () => {
+  const inv = $('invertSign').checked ? -1 : 1;
+  const list = csvRows
+    .map(r => ({date: parseDate(r[$('colDate').value]),
+                desc: String(r[$('colDesc').value] || '').trim(),
+                amount: inv * parseAmount(r[$('colAmt').value])}))
+    .filter(t => Number.isFinite(t.amount) && t.amount !== 0);
+  if (!list.length) return alert('No valid transactions with that mapping.');
+  const res = await api('/api/import/txns', {method: 'POST', body: JSON.stringify(list)});
+  $('mapping').style.display = 'none';
+  toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates`);
+  refresh();
+};
+
+// ---------- render ----------
+$('monthSel').onchange = render;
+
+async function refresh() {
+  txns = await api('/api/txns');
+  if (!txns.length) return;
+  currency = txns[0].currency || 'CHF';
+  const months = [...new Set(txns.map(t => (t.date || '').slice(0, 7)).filter(Boolean))].sort();
+  const cur = $('monthSel').value;
+  $('monthSel').innerHTML = '<option value="">all</option>' + months.map(m => `<option>${m}</option>`).join('');
+  $('monthSel').value = months.includes(cur) ? cur : '';
+  render();
+  renderTrend();
+  loadRules();
+  loadUncategorized();
+}
+
+function render() {
+  const month = $('monthSel').value;
+  const list = month ? txns.filter(t => (t.date || '').startsWith(month)) : txns;
+  const inc = list.filter(t => t.amount > 0), exp = list.filter(t => t.amount < 0);
+  const totalIn = inc.reduce((s, t) => s + t.amount, 0);
+  const totalOut = -exp.reduce((s, t) => s + t.amount, 0);
+  const saved = totalIn - totalOut;
+
+  $('stats').style.display = 'flex';
+  ['uncatCard', 'rulesCard'].forEach(id => $(id).style.display = 'block');
+  ['chart', 'trend'].forEach(id => $(id).style.display = 'block');
+  $('sIn').textContent = fmt(totalIn);
+  $('sOut').textContent = fmt(totalOut);
+  $('sSave').textContent = fmt(saved);
+  $('sSave').className = 'v ' + (saved >= 0 ? 'pos' : 'neg');
+  $('sRate').textContent = totalIn ? (100 * saved / totalIn).toFixed(1) + ' %' : '–';
+  const dates = list.map(t => t.date).filter(Boolean).sort();
+  $('sPeriod').textContent = dates.length ? `${dates[0]} → ${dates.at(-1)}` : '–';
+  renderSankey(inc, exp, saved);
+}
+
+const PALETTE = ['#58c9b9','#6a9fe0','#b183d6','#e0916a','#d6c96a','#7ad07a',
+                 '#e07a9b','#6ad0cf','#9a8fe0','#d0a06a','#8fb8d0','#c98fb1'];
+const catColor = new Map();
+const colorFor = cat => {
+  if (!catColor.has(cat)) catColor.set(cat, PALETTE[catColor.size % PALETTE.length]);
+  return catColor.get(cat);
+};
+
+function renderSankey(inc, exp, saved) {
+  const nodes = [], idx = new Map();
+  const node = (name, color) => {
+    if (!idx.has(name)) { idx.set(name, nodes.length); nodes.push({name, color}); }
+    return idx.get(name);
+  };
+  const L = {source: [], target: [], value: [], color: []};
+  const link = (s, t, v, c) => { L.source.push(s); L.target.push(t); L.value.push(v); L.color.push(c + '55'); };
+  const sumBy = (list, key) => {
+    const m = new Map();
+    for (const t of list) m.set(key(t), (m.get(key(t)) || 0) + Math.abs(t.amount));
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const hub = node('Budget', '#3d4a56');
+  for (const [cat, v] of sumBy(inc, t => t.cat === 'Uncategorized' ? 'Other income' : t.cat))
+    link(node(cat, '#58c9b9'), hub, v, '#58c9b9');
+  for (const [cat, v] of sumBy(exp, t => t.cat)) {
+    const c = colorFor(cat), cn = node(cat, c);
+    link(hub, cn, v, c);
+    for (const [sub, sv] of sumBy(exp.filter(t => t.cat === cat && t.sub), t => t.sub))
+      link(cn, node(cat + ' · ' + sub, c), sv, c);
+  }
+  if (saved > 0) link(hub, node('Saved', '#58c9b9'), saved, '#58c9b9');
+
+  Plotly.react('chart', [{
+    type: 'sankey', orientation: 'h',
+    node: {label: nodes.map(n => n.name), color: nodes.map(n => n.color),
+           pad: 14, thickness: 14, line: {width: 0},
+           hovertemplate: '%{label}: %{value:,.2f}<extra></extra>'},
+    link: {...L, hovertemplate: '%{source.label} → %{target.label}: %{value:,.2f}<extra></extra>'}
+  }], {paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+       font: {color: '#dde5ec', size: 12.5}, margin: {t: 20, l: 10, r: 10, b: 20}, height: 560},
+     {displayModeBar: false, responsive: true});
+}
+
+async function renderTrend() {
+  const stats = await api('/api/stats/monthly');
+  const months = [...new Set(stats.map(s => s.month))].sort();
+  if (months.length < 2) { $('trend').style.display = 'none'; return; }
+  const cats = [...new Set(stats.filter(s => s.spent > 0).map(s => s.cat))];
+  const traces = cats.map(cat => ({
+    type: 'bar', name: cat, x: months, marker: {color: colorFor(cat)},
+    y: months.map(m => stats.find(s => s.month === m && s.cat === cat)?.spent || 0)
+  }));
+  Plotly.react('trend', traces, {
+    barmode: 'stack', title: {text: 'Monthly spending by category', font: {size: 14}},
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: {color: '#dde5ec', size: 12}, margin: {t: 40, l: 55, r: 10, b: 40}, height: 320,
+    legend: {orientation: 'h', y: -0.18}, xaxis: {gridcolor: '#26313b'}, yaxis: {gridcolor: '#26313b'}
+  }, {displayModeBar: false, responsive: true});
+}
+
+// ---------- guided tagging ----------
+let gGroup = null;
+async function loadUncategorized() {
+  const groups = await api('/api/uncategorized');
+  const totalOut = -txns.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
+  const unSum = groups.reduce((s, g) => s + g.total, 0);
+  $('uncatPct').textContent = totalOut ? `· ${(100 * unSum / totalOut).toFixed(1)}% of expenses` : '';
+  $('uncatBody').innerHTML = groups.map((g, i) =>
+    `<tr><td>${g.desc.replace(/</g, '&lt;')}</td><td class="num">${g.n}</td>
+     <td class="num">${g.total.toLocaleString('de-CH', {minimumFractionDigits: 2})}</td>
+     <td><button class="small" data-i="${i}">tag</button></td></tr>`
+  ).join('') || '<tr><td colspan="4" style="color:var(--muted)">everything categorized 🎉</td></tr>';
+  $('uncatBody').querySelectorAll('button').forEach(b => b.onclick = () => openGuide(groups[+b.dataset.i]));
+
+  const cats = await api('/api/categories');
+  $('catList').innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join('');
+  $('subList').innerHTML = [...new Set(Object.values(cats).flat())].map(s => `<option>${s}</option>`).join('');
+}
+
+function openGuide(g) {
+  gGroup = g;
+  $('guide').style.display = 'block';
+  $('gDesc').textContent = `${g.desc} — ${g.n}× / ${g.total.toFixed(2)} ${currency}`;
+  // exact-match default, regex-escaped; user can loosen it (e.g. "migros" instead of full text)
+  $('gMatch').value = g.desc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  $('gCat').value = ''; $('gSub').value = '';
+  $('gCat').focus();
+}
+$('gCancel').onclick = () => $('guide').style.display = 'none';
+$('gApply').onclick = async () => {
+  if (!$('gCat').value.trim()) return alert('Category required');
+  const mode = document.querySelector('input[name=gMode]:checked').value;
+  const body = {cat: $('gCat').value.trim(), sub: $('gSub').value.trim() || null};
+  if (mode === 'rule') body.match = $('gMatch').value;
+  else body.ids = txns.filter(t => t.desc === gGroup.desc && t.cat === 'Uncategorized').map(t => t.id);
+  try {
+    await api('/api/assign', {method: 'POST', body: JSON.stringify(body)});
+    $('guide').style.display = 'none';
+    toast(mode === 'rule' ? 'Rule saved & applied' : 'Tagged manually');
+    refresh();
+  } catch (err) { alert(err.message); }
+};
+
+// ---------- rules editor (text view over rules.json) ----------
+async function loadRules() {
+  const rules = await api('/api/rules');
+  $('rules').value = rules.map(r => [r.match, r.cat, r.sub].filter(Boolean).join(' ; ')).join('\n');
+}
+$('saveRules').onclick = async () => {
+  const rules = $('rules').value.split('\n')
+    .map(l => l.trim()).filter(l => l && !l.startsWith('#'))
+    .map(l => {
+      const [match, cat, sub] = l.split(';').map(s => s.trim());
+      return {match, cat, sub: sub || null};
+    }).filter(r => r.match && r.cat);
+  try {
+    const res = await api('/api/rules', {method: 'PUT', body: JSON.stringify({rules})});
+    toast(`Saved — re-applied to ${res.reapplied} transactions`);
+    refresh();
+  } catch (err) { alert(err.message); }
+};
+
+refresh().catch(() => {});  // empty DB on first run is fine
+</script>
+</body>
+</html>
