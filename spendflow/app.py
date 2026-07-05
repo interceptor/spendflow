@@ -94,6 +94,13 @@ class Rules(BaseModel):
     rules: list[dict]
 
 
+class Rename(BaseModel):
+    level: str          # 'cat' | 'sub' — which column to rewrite
+    old: str
+    new: str
+    sub_of: str | None = None  # limit a sub rename to one parent category (optional)
+
+
 # ---------- import ----------
 @app.post("/api/import/txns")
 def import_txns(txns: list[TxnIn]):
@@ -303,6 +310,41 @@ def put_rules(body: Rules):
     with db() as con:
         applied = apply_rules(con)
     return {"ok": True, "reapplied": applied}
+
+
+@app.post("/api/category/rename")
+def rename_category(r: Rename):
+    """Fix category-hygiene issues from the Review card. Rewrites a name across
+    both transactions and rules.json at the given level:
+      - level='cat': merge/rename a category (e.g. 'taxes' -> 'Taxes').
+      - level='sub': rename a subcategory, optionally only under one category
+        (sub_of), to resolve a name used at both levels.
+    Rules keep their regex; only the target cat/sub is rewritten."""
+    if r.level not in ("cat", "sub"):
+        raise HTTPException(422, "level must be 'cat' or 'sub'")
+    if not r.new.strip():
+        raise HTTPException(422, "new name required")
+    changed = 0
+    with db() as con:
+        if r.level == "cat":
+            cur = con.execute("UPDATE txn SET cat=? WHERE cat=?", (r.new, r.old))
+        elif r.sub_of:
+            cur = con.execute("UPDATE txn SET sub=? WHERE sub=? AND cat=?",
+                              (r.new, r.old, r.sub_of))
+        else:
+            cur = con.execute("UPDATE txn SET sub=? WHERE sub=?", (r.new, r.old))
+        changed = cur.rowcount
+
+        rules = load_rules()
+        for rule in rules:
+            if r.level == "cat" and rule.get("cat") == r.old:
+                rule["cat"] = r.new
+            elif r.level == "sub" and rule.get("sub") == r.old \
+                    and (not r.sub_of or rule.get("cat") == r.sub_of):
+                rule["sub"] = r.new
+        RULES_PATH.write_text(json.dumps(rules, indent=1, ensure_ascii=False))
+        apply_rules(con)
+    return {"ok": True, "changed": changed}
 
 
 # ---------- frontend ----------

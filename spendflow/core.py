@@ -315,12 +315,16 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
     for variants in by_norm.values():
         if len(variants) > 1:
             names = sorted(variants, key=lambda c: -len(cat_txns[c]))  # most-used first
+            keep, *merge = names
             out.append({
                 "type": "duplicate", "severity": "warn",
                 "title": f"Duplicate category: {' / '.join(names)}",
                 "detail": f"These names differ only by case or spacing. Merge into "
-                          f"'{names[0]}'?",
-                "items": [{"name": c, "n": len(cat_txns[c])} for c in names]})
+                          f"'{keep}'?",
+                "items": [{"name": c, "n": len(cat_txns[c])} for c in names],
+                # one-click fix: merge each minority variant into the most-used name
+                "action": {"label": f"Merge into '{keep}'",
+                           "ops": [{"level": "cat", "old": m, "new": keep} for m in merge]}})
 
     # 2) a name used as BOTH a category and a subcategory (causes Sankey loops)
     for name in sorted(cats & subs):
@@ -328,8 +332,12 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
             "type": "cross_level", "severity": "warn",
             "title": f"'{name}' is both a category and a subcategory",
             "detail": "Reusing a name at two levels is confusing and distorts the "
-                      "flow chart. Rename one of them.",
-            "items": [{"name": name, "n": len(cat_txns.get(name, []))}]})
+                      "flow chart. Rename the subcategory use to disambiguate.",
+            "items": [{"name": name, "n": len(cat_txns.get(name, []))}],
+            # one-click fix: rename the *subcategory* occurrences (leaves the
+            # category, which usually has more transactions, untouched)
+            "action": {"label": f"Rename sub → '{name} (sub)'",
+                       "ops": [{"level": "sub", "old": name, "new": f"{name} (sub)"}]}})
 
     # 3) singleton categories (a single transaction — possible typo / stray)
     singletons = sorted((c for c in cats if len(cat_txns[c]) == 1))
