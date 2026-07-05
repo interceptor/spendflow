@@ -204,6 +204,23 @@ _CATEGORY_HINTS: list[tuple[str, str, str | None]] = [
     (r"dauerauftrag|bancomat|bezug", "Transfers", "Cash/Standing order"),
     (r"kontoführung|paketpreis|gebühr|memberplus|sollzins|abschlussbetreffnis|"
      r"saldierung|saldovortrag", "Bank fees", None),
+    # --- credit-card merchants (mostly digital subscriptions / online) ---
+    (r"sbb|cff|ffs|mobile ticket", "Transport", "Public transport"),
+    (r"claude\.ai|anthropic|openai|chatgpt|google \*grok", "Software", "AI"),
+    (r"tidal|spotify|prime video|netflix|crunchyroll|disney|audible", "Subscriptions", "Media"),
+    (r"digitalrepublic|starlink", "Telecom", None),
+    (r"digitec|galaxus|temu|iherb|amzn|amazon", "Shopping", "Online"),
+    (r"battle\.net|steam|epic games|nintendo", "Leisure", "Games"),
+    (r"amende|busse|fine|police", "Fines", None),
+    # --- Viseca merchant-category tags (fallback: they classify their own txns) ---
+    (r"supermärkte|lebensmittel", "Groceries", None),
+    (r"drogerien|apotheken", "Health", "Pharmacy"),
+    (r"transportdienstleistungen", "Transport", None),
+    (r"digitalprodukte|computersoftware|it services|software", "Software", None),
+    (r"shopping-abonnements|abonnement", "Subscriptions", None),
+    (r"warenhäuser|spezialgeschäfte", "Shopping", None),
+    (r"telekommunikation|internet, webhosting", "Telecom", None),
+    (r"kosmetik|parfümerie", "Personal care", None),
 ]
 _HINTS_COMPILED = [(re.compile(p, re.I), c, s) for p, c, s in _CATEGORY_HINTS]
 
@@ -314,7 +331,8 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
         by_norm.setdefault(_norm_cat(c), set()).add(c)
     for variants in by_norm.values():
         if len(variants) > 1:
-            names = sorted(variants, key=lambda c: -len(cat_txns[c]))  # most-used first
+            # most-used first; ties broken alphabetically for a deterministic keeper
+            names = sorted(variants, key=lambda c: (-len(cat_txns[c]), c))
             keep, *merge = names
             out.append({
                 "type": "duplicate", "severity": "warn",

@@ -192,12 +192,14 @@ def test_merge_duplicate_category_action(client):
     client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
     client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
     dup = next(f for f in client.get("/api/anomalies").json() if f["type"] == "duplicate")
+    keep = dup["action"]["ops"][0]["new"]         # the winning variant
+    gone = {op["old"] for op in dup["action"]["ops"]}
     # execute the finding's one-click action
     for op in dup["action"]["ops"]:
         assert client.post("/api/category/rename", json=op).status_code == 200
-    # both variants now collapsed to a single category, no more duplicate finding
+    # both variants collapsed into the kept one, no more duplicate finding
     cats = {t["cat"] for t in client.get("/api/txns").json() if t["cat"] != "Uncategorized"}
-    assert "Taxes" not in cats and "taxes" in cats
+    assert keep in cats and not (gone & cats)
     assert not any(f["type"] == "duplicate" for f in client.get("/api/anomalies").json())
 
 
