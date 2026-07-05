@@ -178,10 +178,10 @@ def test_uncategorized_flags_credit_card(client):
 
 def test_anomalies_endpoint(client):
     client.post("/api/import/txns", json=TXNS)
-    # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding
+    # two txns tagged with case-variants of one name -> a duplicate-name finding
     ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
-    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
-    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "Shopping"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "shopping"})
     findings = client.get("/api/anomalies").json()
     assert any(f["type"] == "duplicate" for f in findings)
 
@@ -189,8 +189,8 @@ def test_anomalies_endpoint(client):
 def test_merge_duplicate_category_action(client):
     client.post("/api/import/txns", json=TXNS)
     ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
-    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
-    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "Shopping"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "shopping"})
     dup = next(f for f in client.get("/api/anomalies").json() if f["type"] == "duplicate")
     keep = dup["action"]["ops"][0]["new"]         # the winning variant
     gone = {op["old"] for op in dup["action"]["ops"]}
