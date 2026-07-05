@@ -211,7 +211,8 @@ def uncategorized(kind: str = "expense"):
             learned.setdefault(r["merchant"], (r["cat"], r["sub"]))
 
         rows = con.execute(f"""
-            SELECT merchant, MIN(desc) desc, COUNT(*) n, SUM(ABS(amount)) total
+            SELECT merchant, MIN(desc) desc, COUNT(*) n, SUM(ABS(amount)) total,
+                   MAX(parent_id IS NOT NULL) is_cc   -- came from a credit-card statement
             FROM txn WHERE cat='Uncategorized' AND {sign} AND merchant IS NOT NULL
                   AND reconciled=0
             GROUP BY merchant ORDER BY total DESC LIMIT 200""").fetchall()

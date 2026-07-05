@@ -72,6 +72,8 @@
   .toggle button:last-child { border-radius:0 7px 7px 0; border-left:none; }
   .toggle button.active { background:var(--accent); color:#08211d; border-color:var(--accent); font-weight:600; }
   .mtok { font-weight:550; }
+  .cc-tag { margin-left:7px; font-size:10.5px; letter-spacing:.02em; color:#d6c96a;
+            border:1px solid #514a2a; border-radius:9px; padding:0 6px; white-space:nowrap; }
   .sugg { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10px;
           background:rgba(88,201,185,.14); color:var(--accent); font-size:11px; white-space:nowrap; }
   .sugg.learned { background:rgba(106,159,224,.16); color:#6a9fe0; }
@@ -531,8 +533,9 @@ async function loadUncategorized() {
     const cls = s.source === 'learned' ? 'sugg learned' : 'sugg';
     const tip = s.source === 'learned' ? 'learned from your tags' : 'suggested category';
     const guess = s.cat ? `<span class="${cls}" title="${tip}">${esc(s.cat)}${s.sub ? ' · ' + esc(s.sub) : ''}</span>` : '';
+    const cc = g.is_cc ? '<span class="cc-tag" title="from a credit-card statement">[credit card]</span>' : '';
     const name = esc(g.merchant || g.desc);
-    return `<tr><td><span class="mtok">${name}</span>${guess}</td><td class="num">${g.n}</td>
+    return `<tr><td><span class="mtok">${name}</span>${cc}${guess}</td><td class="num">${g.n}</td>
      <td class="num">${g.total.toLocaleString('de-CH', {minimumFractionDigits: 2})}</td>
      <td class="tagcell">${s.cat ? `<button class="small primary" data-accept="${i}" title="create rule: ${esc(s.match)} → ${esc(s.cat)}">✓ ${esc(s.cat)}</button>` : ''}
        <button class="small" data-i="${i}">edit</button></td></tr>`;

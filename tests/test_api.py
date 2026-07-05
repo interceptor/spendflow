@@ -164,6 +164,18 @@ def test_cc_reconciles_against_bank_debit(client):
     assert round(mar, 2) == 100.00  # the CC line items land in March, not doubled
 
 
+def test_uncategorized_flags_credit_card(client):
+    from spendflow import app as app_mod
+    client.post("/api/import/txns", json=[
+        {"date": "2026-04-27", "desc": "Zahlung Viseca Payment Services AG", "amount": -100.00},
+        {"date": "2026-04-01", "desc": "Einkauf Coop Pronto", "amount": -25.00}])
+    app_mod._import_cc(CC_TEXT)   # imports TEMU + Lidl as CC children
+    groups = {g["merchant"]: g for g in client.get("/api/uncategorized").json()}
+    assert any(g["is_cc"] for m, g in groups.items() if "TEMU" in m)   # CC item flagged
+    coop = next(g for m, g in groups.items() if "Coop" in m)
+    assert not coop["is_cc"]                                            # bank item not flagged
+
+
 def test_anomalies_endpoint(client):
     client.post("/api/import/txns", json=TXNS)
     # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding
