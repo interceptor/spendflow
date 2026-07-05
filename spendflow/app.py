@@ -11,7 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .core import categorize, compile_rules, parse_camt, parse_raiffeisen, txn_hash
+from .core import (categorize, compile_rules, detect_anomalies, merchant_token,
+                   parse_camt, parse_raiffeisen, parse_viseca, suggest_rule, txn_hash)
 
 DATA_DIR = Path(os.environ.get("SPENDFLOW_DATA", "data"))
 DB_PATH = DATA_DIR / "spendflow.db"
@@ -33,7 +34,21 @@ def init() -> None:
             date TEXT, amount REAL NOT NULL, desc TEXT NOT NULL,
             currency TEXT DEFAULT 'CHF',
             cat TEXT DEFAULT 'Uncategorized', sub TEXT,
-            source TEXT DEFAULT 'rule')""")  # source: 'rule' | 'manual'
+            merchant TEXT,                        -- tokenized at import; stable grouping key
+            reconciled INTEGER DEFAULT 0,         -- 1 = lump-sum replaced by itemized children
+            parent_id INTEGER,                    -- CC line item -> its bank debit
+            source TEXT DEFAULT 'rule')""")       # source: 'rule' | 'manual'
+        # Migrations: add columns + backfill for DBs created before they existed.
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(txn)")}
+        if "merchant" not in cols:
+            con.execute("ALTER TABLE txn ADD COLUMN merchant TEXT")
+        if "reconciled" not in cols:
+            con.execute("ALTER TABLE txn ADD COLUMN reconciled INTEGER DEFAULT 0")
+        if "parent_id" not in cols:
+            con.execute("ALTER TABLE txn ADD COLUMN parent_id INTEGER")
+        for r in con.execute("SELECT id, desc FROM txn WHERE merchant IS NULL").fetchall():
+            con.execute("UPDATE txn SET merchant=? WHERE id=?",
+                        (merchant_token(r["desc"]), r["id"]))
     if not RULES_PATH.exists():
         RULES_PATH.write_text("[]")
 
@@ -88,8 +103,9 @@ def import_txns(txns: list[TxnIn]):
         for t in txns:
             h = txn_hash(t.date, t.amount, t.desc)
             cur = con.execute(
-                "INSERT OR IGNORE INTO txn (hash, date, amount, desc, currency) VALUES (?,?,?,?,?)",
-                (h, t.date, t.amount, t.desc, t.currency))
+                "INSERT OR IGNORE INTO txn (hash, date, amount, desc, currency, merchant) "
+                "VALUES (?,?,?,?,?,?)",
+                (h, t.date, t.amount, t.desc, t.currency, merchant_token(t.desc)))
             ins += cur.rowcount
         apply_rules(con)
     return {"imported": ins, "duplicates": len(txns) - ins}
@@ -106,15 +122,60 @@ def import_camt(body: dict):
 
 @app.post("/api/import/pdf")
 async def import_pdf(file: UploadFile):
+    """Auto-detect Raiffeisen PDF type: a Viseca credit-card statement is
+    reconciled against its bank debit; an account Kontoauszug imports normally."""
     import io
     import pdfplumber
     try:
         with pdfplumber.open(io.BytesIO(await file.read())) as pdf:
             text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        raise HTTPException(422, f"Could not read PDF: {e}")
+    if "Viseca" in text or "Kartenkontonummer" in text:
+        return _import_cc(text)
+    try:
         parsed = parse_raiffeisen(text)
     except Exception as e:  # corrupt PDF (pdfminer errors) or wrong format (ValueError)
         raise HTTPException(422, f"Could not parse PDF: {e}")
     return import_txns([TxnIn(**t) for t in parsed])
+
+
+def _import_cc(text: str) -> dict:
+    """Viseca credit-card statement: import line items, then reconcile against the
+    single lump-sum bank debit to Viseca (matched by amount) so the bill isn't
+    double-counted. The bank debit is flagged `reconciled` (excluded from spend);
+    its itemized children carry `parent_id` and flow through the rule set."""
+    try:
+        items, total = parse_viseca(text)
+    except Exception as e:
+        raise HTTPException(422, f"Could not parse credit-card statement: {e}")
+
+    ins = 0
+    with db() as con:
+        # Find the bank debit that paid this bill: a not-yet-reconciled expense whose
+        # magnitude equals the statement total. Prefer a Viseca-named row.
+        parent_id = None
+        if total is not None:
+            cand = con.execute(
+                "SELECT id, desc FROM txn WHERE reconciled=0 AND parent_id IS NULL "
+                "AND amount < 0 AND ABS(ABS(amount) - ?) < 0.05 "
+                "ORDER BY (desc LIKE '%Viseca%') DESC, ABS(ABS(amount) - ?) LIMIT 1",
+                (total, total)).fetchone()
+            if cand:
+                parent_id = cand["id"]
+                con.execute("UPDATE txn SET reconciled=1 WHERE id=?", (parent_id,))
+
+        for t in items:
+            h = txn_hash(t["date"], t["amount"], t["desc"])
+            cur = con.execute(
+                "INSERT OR IGNORE INTO txn (hash, date, amount, desc, currency, merchant, parent_id) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (h, t["date"], t["amount"], t["desc"], t["currency"],
+                 merchant_token(t["desc"]), parent_id))
+            ins += cur.rowcount
+        apply_rules(con)
+    return {"imported": ins, "duplicates": len(items) - ins,
+            "reconciled": parent_id is not None, "total": total}
 
 
 # ---------- read ----------
@@ -128,14 +189,35 @@ def get_txns(month: str | None = None):
 
 
 @app.get("/api/uncategorized")
-def uncategorized():
-    """Expense descriptions still unmatched, grouped, biggest first - feeds guided tagging."""
+def uncategorized(kind: str = "expense"):
+    """Unmatched transactions grouped by merchant token, biggest first - feeds guided tagging.
+
+    `kind` selects the flow side: 'expense' (amount < 0, default) or 'income'
+    (amount > 0), so income streams can be tagged/ruled too. Each group carries a
+    `suggest` block (regex + category guess), learned from how the same merchant
+    was categorized elsewhere (manual tags preferred), falling back to a static
+    seed map. All local; no data leaves the machine."""
+    sign = "amount > 0" if kind == "income" else "amount < 0"
     with db() as con:
-        rows = con.execute("""
-            SELECT desc, COUNT(*) n, SUM(ABS(amount)) total
-            FROM txn WHERE cat='Uncategorized' AND amount < 0
-            GROUP BY desc ORDER BY total DESC LIMIT 200""").fetchall()
-    return [dict(r) for r in rows]
+        # What each merchant has been categorized as elsewhere -> learned hint.
+        # Prefer manual tags (source='manual') over rule-derived; most-frequent wins.
+        learned: dict[str, tuple[str, str | None]] = {}
+        seen = con.execute("""
+            SELECT merchant, cat, sub, source, COUNT(*) n
+            FROM txn WHERE cat != 'Uncategorized' AND merchant IS NOT NULL
+            GROUP BY merchant, cat, sub
+            ORDER BY (source='manual') DESC, n DESC""").fetchall()
+        for r in seen:
+            learned.setdefault(r["merchant"], (r["cat"], r["sub"]))
+
+        rows = con.execute(f"""
+            SELECT merchant, MIN(desc) desc, COUNT(*) n, SUM(ABS(amount)) total,
+                   MAX(parent_id IS NOT NULL) is_cc   -- came from a credit-card statement
+            FROM txn WHERE cat='Uncategorized' AND {sign} AND merchant IS NOT NULL
+                  AND reconciled=0
+            GROUP BY merchant ORDER BY total DESC LIMIT 200""").fetchall()
+    return [dict(r, suggest=suggest_rule(r["desc"], learned.get(r["merchant"])))
+            for r in rows]
 
 
 @app.get("/api/stats/monthly")
@@ -146,7 +228,7 @@ def stats_monthly():
             SELECT strftime('%Y-%m', date) month, cat,
                    SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) spent,
                    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) received
-            FROM txn WHERE date IS NOT NULL
+            FROM txn WHERE date IS NOT NULL AND reconciled=0
             GROUP BY month, cat ORDER BY month""").fetchall()
     return [dict(r) for r in rows]
 
@@ -168,6 +250,15 @@ def categories():
     return cats
 
 
+@app.get("/api/anomalies")
+def anomalies():
+    """Category-hygiene findings (near-duplicate names, name reused across levels,
+    singleton categories, amount outliers) for the Review card. Read-only hints."""
+    with db() as con:
+        txns = [dict(r) for r in con.execute("SELECT cat, sub, amount, desc FROM txn")]
+    return detect_anomalies(txns)
+
+
 # ---------- categorize ----------
 @app.post("/api/assign")
 def assign(a: Assign):
@@ -185,8 +276,15 @@ def assign(a: Assign):
             rules.append({"match": a.match, "cat": a.cat, "sub": a.sub})
             RULES_PATH.write_text(json.dumps(rules, indent=1, ensure_ascii=False))
         if a.ids:
-            con.executemany("UPDATE txn SET cat=?, sub=?, source='manual' WHERE id=?",
-                            [(a.cat, a.sub, i) for i in a.ids])
+            if a.cat == "Uncategorized":
+                # Assigning 'Uncategorized' means "untag" -> back to rule control,
+                # not a manual pin (which would be immune to rules forever).
+                con.executemany(
+                    "UPDATE txn SET cat='Uncategorized', sub=NULL, source='rule' WHERE id=?",
+                    [(i,) for i in a.ids])
+            else:
+                con.executemany("UPDATE txn SET cat=?, sub=?, source='manual' WHERE id=?",
+                                [(a.cat, a.sub, i) for i in a.ids])
         applied = apply_rules(con)
     return {"ok": True, "reapplied": applied}
 

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SpendFlow</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+<script src="/static/vendor/papaparse.min.js"></script>
+<script src="/static/vendor/plotly.min.js"></script>
 <style>
   :root {
     --bg:#0f1317; --panel:#161c22; --panel2:#1c242c; --line:#26313b;
@@ -66,6 +66,36 @@
   th { color:var(--muted); font-weight:500; text-transform:uppercase; font-size:10.5px; letter-spacing:.07em; }
   td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   #uncatBody tr:hover { background:var(--panel2); }
+  .toggle { display:inline-flex; }
+  .toggle button { border-radius:0; }
+  .toggle button:first-child { border-radius:7px 0 0 7px; }
+  .toggle button:last-child { border-radius:0 7px 7px 0; border-left:none; }
+  .toggle button.active { background:var(--accent); color:#08211d; border-color:var(--accent); font-weight:600; }
+  .mtok { font-weight:550; }
+  .cc-tag { margin-left:7px; font-size:10.5px; letter-spacing:.02em; color:#d6c96a;
+            border:1px solid #514a2a; border-radius:9px; padding:0 6px; white-space:nowrap; }
+  .sugg { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:10px;
+          background:rgba(88,201,185,.14); color:var(--accent); font-size:11px; white-space:nowrap; }
+  .sugg.learned { background:rgba(106,159,224,.16); color:#6a9fe0; }
+  .sugg.learned::before { content:"★ "; }
+  td.tagcell { white-space:nowrap; text-align:right; }
+  td.tagcell button { margin-left:5px; }
+  #rulesList .rrow { display:flex; justify-content:space-between; gap:12px; padding:4px 0;
+                     border-bottom:1px solid var(--line); }
+  #rulesList .rx { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #rulesList .rcat { color:var(--accent); white-space:nowrap; }
+  #reviewList .finding { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  #reviewList .finding:last-child { border-bottom:none; }
+  #reviewList .sev { flex:0 0 auto; font-size:15px; line-height:1.3; }
+  #reviewList .sev.warn { color:#e0b06a; } #reviewList .sev.info { color:var(--muted); }
+  #reviewList .f-body { flex:1; min-width:0; }
+  #reviewList .f-title { font-weight:600; font-size:13.5px; }
+  #reviewList .f-detail { color:var(--muted); font-size:12.5px; margin:2px 0 4px; }
+  #reviewList .f-items { font-size:12px; color:var(--text); }
+  #reviewList .f-items .it { display:inline-block; margin:2px 8px 2px 0; padding:1px 7px;
+                            border:1px solid var(--line); border-radius:10px; white-space:nowrap; }
+  #reviewList .f-items .it b { color:var(--accent); }
+  #reviewList .clean { color:var(--muted); font-size:13px; }
 
   /* guided tagging panel */
   #guide { display:none; background:var(--panel2); border:1px solid var(--accent);
@@ -73,6 +103,22 @@
   #guide .g-desc { font-size:13px; margin-bottom:8px; }
   #guide .g-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
   #guide input[type=text] { min-width:160px; }
+
+  /* searchable combo box (category / subcategory) */
+  .combo { position:relative; display:inline-block; }
+  .combo > input { width:100%; }
+  .combo-list { display:none; position:absolute; z-index:20; left:0; right:0; top:calc(100% + 3px);
+                max-height:220px; overflow-y:auto; background:var(--panel2);
+                border:1px solid var(--accent); border-radius:7px; padding:4px;
+                box-shadow:0 8px 24px rgba(0,0,0,.4); }
+  .combo-list.open { display:block; }
+  .combo-list .opt { padding:5px 9px; border-radius:5px; cursor:pointer; font-size:13px; white-space:nowrap;
+                     overflow:hidden; text-overflow:ellipsis; }
+  .combo-list .opt.active, .combo-list .opt:hover { background:var(--panel); color:var(--accent); }
+  .combo-list .opt.create { color:var(--muted); }
+  .combo-list .opt.create b { color:var(--accent); }
+  .combo-list .none { padding:5px 9px; font-size:12.5px; color:var(--muted); }
+
   #toast { position:fixed; bottom:18px; right:18px; background:var(--panel2);
            border:1px solid var(--accent); border-radius:8px; padding:9px 14px;
            font-size:13px; opacity:0; transition:opacity .25s; pointer-events:none; }
@@ -87,7 +133,7 @@
 <div class="wrap">
   <div id="drop">
     <b>Drop a bank statement</b> or click to browse — re-imports are deduplicated
-    <div class="formats mono">.pdf (Raiffeisen) · .csv · camt.053 .xml</div>
+    <div class="formats mono">.pdf (Raiffeisen account or Viseca credit-card) · .csv · camt.053 .xml</div>
     <input type="file" id="file" accept=".csv,.xml,.txt,.pdf" hidden>
   </div>
 
@@ -116,17 +162,27 @@
   <div id="chart"></div>
   <div id="trend"></div>
 
+  <div class="card" id="reviewCard">
+    <h3>Review <span id="reviewCount" style="color:var(--muted);font-weight:400"></span></h3>
+    <div class="hint">Category hygiene checks — duplicate names, cross-level reuse, singletons, and amount outliers.</div>
+    <div id="reviewList"></div>
+  </div>
+
   <div class="cols">
     <div class="card" id="uncatCard">
-      <h3>Guided tagging <span id="uncatPct" style="color:var(--muted);font-weight:400"></span></h3>
-      <div class="hint">Biggest uncategorized spend first — click <b>tag</b> to create a rule or a one-off manual tag.</div>
+      <h3>Guided tagging <span id="uncatPct" style="color:var(--muted);font-weight:400"></span>
+        <span class="toggle" id="kindToggle" style="float:right">
+          <button class="small active" data-kind="expense">Expenses</button><button class="small" data-kind="income">Income</button>
+        </span></h3>
+      <div class="hint">Biggest uncategorized <span id="kindWord">spend</span> first — click <b>✓</b> to create a rule, or <b>edit</b> for a one-off manual tag.</div>
       <div id="guide">
         <div class="g-desc mono" id="gDesc"></div>
         <div class="g-row">
           <input type="text" id="gMatch" class="mono" title="regex match">
-          <input type="text" id="gCat" list="catList" placeholder="Category">
-          <input type="text" id="gSub" list="subList" placeholder="Subcategory (optional)">
-          <datalist id="catList"></datalist><datalist id="subList"></datalist>
+          <div class="combo"><input type="text" id="gCat" placeholder="Category" autocomplete="off">
+            <div class="combo-list" id="gCatList"></div></div>
+          <div class="combo"><input type="text" id="gSub" placeholder="Subcategory (optional)" autocomplete="off">
+            <div class="combo-list" id="gSubList"></div></div>
         </div>
         <div class="g-row">
           <label class="inline"><input type="radio" name="gMode" value="rule" checked> save as rule (applies everywhere)</label>
@@ -142,10 +198,15 @@
       </table>
     </div>
     <div class="card" id="rulesCard">
-      <h3>Rules <span style="color:var(--muted);font-weight:400">· stored in data/rules.json</span></h3>
-      <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments</div>
-      <textarea id="rules" class="mono" spellcheck="false"></textarea>
-      <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
+      <h3>Rules <span id="rulesCount" style="color:var(--muted);font-weight:400"></span>
+        <button class="small" id="toggleRaw" style="float:right">raw edit</button></h3>
+      <div class="hint">Rules are built by tagging above. Expand raw edit only if you need to hand-tweak.</div>
+      <div id="rawWrap" style="display:none">
+        <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments · stored in data/rules.json</div>
+        <textarea id="rules" class="mono" spellcheck="false"></textarea>
+        <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
+      </div>
+      <div id="rulesList" class="mono" style="font-size:12.5px"></div>
     </div>
   </div>
 </div>
@@ -154,7 +215,7 @@
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-let txns = [], currency = 'CHF', csvRows = null;
+let txns = [], currency = 'CHF', csvRows = null, catMap = {}, uncatKind = 'expense';
 const fmt = n => n.toLocaleString('de-CH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ' + currency;
 const api = async (path, opts) => {
   const r = await fetch(path, opts && {headers: {'Content-Type': 'application/json'}, ...opts});
@@ -207,7 +268,8 @@ async function loadFile(file) {
       const r = await fetch('/api/import/pdf', {method: 'POST', body: fd});
       if (!r.ok) throw new Error((await r.json()).detail);
       const res = await r.json();
-      toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates`);
+      const recon = res.reconciled ? ' · reconciled to bank debit' : '';
+      toast(`Imported ${res.imported}, skipped ${res.duplicates} duplicates${recon}`);
       refresh();
     } catch (err) { alert(err.message); }
     return;
@@ -277,18 +339,22 @@ async function refresh() {
   renderTrend();
   loadRules();
   loadUncategorized();
+  loadReview();
 }
 
 function render() {
   const month = $('monthSel').value;
-  const list = month ? txns.filter(t => (t.date || '').startsWith(month)) : txns;
+  // reconciled lump-sums (e.g. a credit-card bill replaced by its line items) are
+  // excluded from all spend math so the itemized children aren't double-counted.
+  const active = txns.filter(t => !t.reconciled);
+  const list = month ? active.filter(t => (t.date || '').startsWith(month)) : active;
   const inc = list.filter(t => t.amount > 0), exp = list.filter(t => t.amount < 0);
   const totalIn = inc.reduce((s, t) => s + t.amount, 0);
   const totalOut = -exp.reduce((s, t) => s + t.amount, 0);
   const saved = totalIn - totalOut;
 
   $('stats').style.display = 'flex';
-  ['uncatCard', 'rulesCard'].forEach(id => $(id).style.display = 'block');
+  ['uncatCard', 'rulesCard', 'reviewCard'].forEach(id => $(id).style.display = 'block');
   ['chart', 'trend'].forEach(id => $(id).style.display = 'block');
   $('sIn').textContent = fmt(totalIn);
   $('sOut').textContent = fmt(totalOut);
@@ -310,9 +376,13 @@ const colorFor = cat => {
 
 function renderSankey(inc, exp, saved) {
   const nodes = [], idx = new Map();
-  const node = (name, color) => {
-    if (!idx.has(name)) { idx.set(name, nodes.length); nodes.push({name, color}); }
-    return idx.get(name);
+  // Nodes are keyed by a role-prefixed INTERNAL id, not their display label, so a
+  // name reused across levels (e.g. 'household' as both a category and a sub, or a
+  // 'budget' category vs the 'Budget' hub) can never resolve to the same node and
+  // form a backward loop. `label` is what the user sees; `key` keeps them distinct.
+  const node = (key, label, color) => {
+    if (!idx.has(key)) { idx.set(key, nodes.length); nodes.push({label, color}); }
+    return idx.get(key);
   };
   const L = {source: [], target: [], value: [], color: []};
   const link = (s, t, v, c) => { L.source.push(s); L.target.push(t); L.value.push(v); L.color.push(c + '55'); };
@@ -321,25 +391,42 @@ function renderSankey(inc, exp, saved) {
     for (const t of list) m.set(key(t), (m.get(key(t)) || 0) + Math.abs(t.amount));
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   };
-  const hub = node('Budget', '#3d4a56');
-  for (const [cat, v] of sumBy(inc, t => t.cat === 'Uncategorized' ? 'Other income' : t.cat))
-    link(node(cat, '#58c9b9'), hub, v, '#58c9b9');
+  const hub = node('\0hub', 'Budget', '#3d4a56');
+  const INC = '#58c9b9';
+  // income: subcategory -> category -> Budget, mirroring the expense side so
+  // multiple streams under one category (e.g. Income · Salary, Income · Rent)
+  // show as separate source bands instead of collapsing into one node.
+  for (const [cat, v] of sumBy(inc, t => t.cat === 'Uncategorized' ? 'Other income' : t.cat)) {
+    const cn = node('inccat:' + cat, cat, INC);
+    link(cn, hub, v, INC);
+    for (const [sub, sv] of sumBy(inc.filter(t => t.cat === cat && t.sub), t => t.sub))
+      link(node('incsub:' + cat + '\0' + sub, cat + ' · ' + sub, INC), cn, sv, INC);
+  }
   for (const [cat, v] of sumBy(exp, t => t.cat)) {
-    const c = colorFor(cat), cn = node(cat, c);
+    const c = colorFor(cat), cn = node('expcat:' + cat, cat, c);
     link(hub, cn, v, c);
     for (const [sub, sv] of sumBy(exp.filter(t => t.cat === cat && t.sub), t => t.sub))
-      link(cn, node(cat + ' · ' + sub, c), sv, c);
+      link(cn, node('expsub:' + cat + '\0' + sub, cat + ' · ' + sub, c), sv, c);
   }
-  if (saved > 0) link(hub, node('Saved', '#58c9b9'), saved, '#58c9b9');
+  if (saved > 0) link(hub, node('\0saved', 'Saved', '#58c9b9'), saved, '#58c9b9');
+
+  // Grow the chart vertically with the data: the busiest column (right side =
+  // expense categories, or their subcategories) sets the crowding. Give each
+  // node in that column room so labels don't overlap.
+  const expCats = new Set(exp.map(t => t.cat)).size;
+  const expSubs = new Set(exp.filter(t => t.sub).map(t => t.cat + t.sub)).size;
+  const incLeaves = new Set(inc.map(t => t.sub ? t.cat + t.sub : t.cat)).size;
+  const tallestCol = Math.max(expCats, expSubs, incLeaves);
+  const height = Math.max(560, tallestCol * 34 + 60);
 
   Plotly.react('chart', [{
     type: 'sankey', orientation: 'h',
-    node: {label: nodes.map(n => n.name), color: nodes.map(n => n.color),
+    node: {label: nodes.map(n => n.label), color: nodes.map(n => n.color),
            pad: 14, thickness: 14, line: {width: 0},
            hovertemplate: '%{label}: %{value:,.2f}<extra></extra>'},
     link: {...L, hovertemplate: '%{source.label} → %{target.label}: %{value:,.2f}<extra></extra>'}
   }], {paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-       font: {color: '#dde5ec', size: 12.5}, margin: {t: 20, l: 10, r: 10, b: 20}, height: 560},
+       font: {color: '#dde5ec', size: 12.5}, margin: {t: 20, l: 10, r: 10, b: 20}, height},
      {displayModeBar: false, responsive: true});
 }
 
@@ -360,33 +447,127 @@ async function renderTrend() {
   }, {displayModeBar: false, responsive: true});
 }
 
+// ---------- searchable combo box ----------
+// input + filtered dropdown over getOptions(). Free entry: whatever is typed is
+// the value; existing options are just suggestions. Keyboard: ↑/↓/Enter/Esc.
+function makeCombo(input, listEl, getOptions) {
+  let active = -1, items = [];
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const close = () => { listEl.classList.remove('open'); active = -1; };
+  const open = () => {
+    const q = input.value.trim().toLowerCase();
+    const all = [...new Set(getOptions())].filter(Boolean);
+    const matches = all.filter(o => o.toLowerCase().includes(q));
+    items = matches.slice();
+    let html = matches.map((o, i) =>
+      `<div class="opt" data-i="${i}">${esc(o)}</div>`).join('');
+    // offer to create a genuinely new value the user typed
+    const exact = all.some(o => o.toLowerCase() === q);
+    if (q && !exact) { html += `<div class="opt create" data-new="1">+ create <b>${esc(input.value.trim())}</b></div>`; }
+    else if (!matches.length) { html = '<div class="none">no matches — type to create</div>'; }
+    listEl.innerHTML = html;
+    listEl.classList.add('open');
+    active = -1;
+    listEl.querySelectorAll('.opt').forEach(el => {
+      el.onmousedown = e => {   // mousedown beats input blur
+        e.preventDefault();
+        pick(el.dataset.new ? input.value.trim() : items[+el.dataset.i]);
+      };
+    });
+  };
+  const pick = val => { input.value = val; close(); input.dispatchEvent(new Event('change')); };
+  const highlight = () => listEl.querySelectorAll('.opt').forEach((el, i) =>
+    el.classList.toggle('active', i === active));
+
+  input.addEventListener('focus', open);
+  input.addEventListener('input', open);
+  input.addEventListener('keydown', e => {
+    const opts = listEl.querySelectorAll('.opt');
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, opts.length - 1); highlight(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); highlight(); }
+    else if (e.key === 'Enter') {
+      if (listEl.classList.contains('open') && active >= 0) {
+        e.preventDefault();
+        const el = opts[active];
+        pick(el.dataset.new ? input.value.trim() : items[+el.dataset.i]);
+      }
+    } else if (e.key === 'Escape') { close(); }
+  });
+  input.addEventListener('blur', () => setTimeout(close, 120));
+  return { open };
+}
+
 // ---------- guided tagging ----------
 let gGroup = null;
-async function loadUncategorized() {
-  const groups = await api('/api/uncategorized');
-  const totalOut = -txns.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
-  const unSum = groups.reduce((s, g) => s + g.total, 0);
-  $('uncatPct').textContent = totalOut ? `· ${(100 * unSum / totalOut).toFixed(1)}% of expenses` : '';
-  $('uncatBody').innerHTML = groups.map((g, i) =>
-    `<tr><td>${g.desc.replace(/</g, '&lt;')}</td><td class="num">${g.n}</td>
-     <td class="num">${g.total.toLocaleString('de-CH', {minimumFractionDigits: 2})}</td>
-     <td><button class="small" data-i="${i}">tag</button></td></tr>`
-  ).join('') || '<tr><td colspan="4" style="color:var(--muted)">everything categorized 🎉</td></tr>';
-  $('uncatBody').querySelectorAll('button').forEach(b => b.onclick = () => openGuide(groups[+b.dataset.i]));
+const catCombo = makeCombo($('gCat'), $('gCatList'), () => Object.keys(catMap).sort());
+// subcategory suggestions are scoped to the chosen category, falling back to all
+const subCombo = makeCombo($('gSub'), $('gSubList'), () => {
+  const c = $('gCat').value.trim();
+  const scoped = catMap[c];
+  return (scoped && scoped.length ? scoped : Object.values(catMap).flat()).sort();
+});
+// re-filter subcategory list when the category changes
+$('gCat').addEventListener('change', () => { if (document.activeElement === $('gSub')) subCombo.open(); });
 
-  const cats = await api('/api/categories');
-  $('catList').innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join('');
-  $('subList').innerHTML = [...new Set(Object.values(cats).flat())].map(s => `<option>${s}</option>`).join('');
+// toggle between tagging uncategorized expenses vs income streams
+$('kindToggle').querySelectorAll('button').forEach(b => b.onclick = () => {
+  if (uncatKind === b.dataset.kind) return;
+  uncatKind = b.dataset.kind;
+  $('kindToggle').querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+  $('kindWord').textContent = uncatKind === 'income' ? 'income' : 'spend';
+  $('guide').style.display = 'none';
+  loadUncategorized();
+});
+
+async function loadUncategorized() {
+  const groups = await api('/api/uncategorized?kind=' + uncatKind);
+  const side = uncatKind === 'income'
+    ? txns.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0)
+    : -txns.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
+  const unSum = groups.reduce((s, g) => s + g.total, 0);
+  $('uncatPct').textContent = side ? `· ${(100 * unSum / side).toFixed(1)}% of ${uncatKind}` : '';
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('uncatBody').innerHTML = groups.map((g, i) => {
+    const s = g.suggest || {};
+    // learned hints (from your own past tags) marked distinctly from static seed guesses
+    const cls = s.source === 'learned' ? 'sugg learned' : 'sugg';
+    const tip = s.source === 'learned' ? 'learned from your tags' : 'suggested category';
+    const guess = s.cat ? `<span class="${cls}" title="${tip}">${esc(s.cat)}${s.sub ? ' · ' + esc(s.sub) : ''}</span>` : '';
+    const cc = g.is_cc ? '<span class="cc-tag" title="from a credit-card statement">[credit card]</span>' : '';
+    const name = esc(g.merchant || g.desc);
+    return `<tr><td><span class="mtok">${name}</span>${cc}${guess}</td><td class="num">${g.n}</td>
+     <td class="num">${g.total.toLocaleString('de-CH', {minimumFractionDigits: 2})}</td>
+     <td class="tagcell">${s.cat ? `<button class="small primary" data-accept="${i}" title="create rule: ${esc(s.match)} → ${esc(s.cat)}">✓ ${esc(s.cat)}</button>` : ''}
+       <button class="small" data-i="${i}">edit</button></td></tr>`;
+  }).join('') || '<tr><td colspan="4" style="color:var(--muted)">everything categorized 🎉</td></tr>';
+  $('uncatBody').querySelectorAll('button[data-i]').forEach(b => b.onclick = () => openGuide(groups[+b.dataset.i]));
+  $('uncatBody').querySelectorAll('button[data-accept]').forEach(b => b.onclick = () => acceptSuggestion(groups[+b.dataset.accept]));
+
+  catMap = await api('/api/categories');   // {category: [subcategories]} — feeds the combos
+}
+
+// One-click: accept the heuristic suggestion as a rule, no dialog.
+async function acceptSuggestion(g) {
+  const s = g.suggest || {};
+  if (!s.match || !s.cat) return openGuide(g);
+  try {
+    await api('/api/assign', {method: 'POST',
+      body: JSON.stringify({match: s.match, cat: s.cat, sub: s.sub || null})});
+    toast(`Rule saved: ${s.token || s.match} → ${s.cat}`);
+    refresh();
+  } catch (err) { alert(err.message); }
 }
 
 function openGuide(g) {
   gGroup = g;
+  const s = g.suggest || {};
   $('guide').style.display = 'block';
-  $('gDesc').textContent = `${g.desc} — ${g.n}× / ${g.total.toFixed(2)} ${currency}`;
-  // exact-match default, regex-escaped; user can loosen it (e.g. "migros" instead of full text)
-  $('gMatch').value = g.desc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  $('gCat').value = ''; $('gSub').value = '';
-  $('gCat').focus();
+  $('gDesc').textContent = `${g.merchant || g.desc} — ${g.n}× / ${g.total.toFixed(2)} ${currency}`;
+  // Pre-fill from the suggestion: merchant-token regex + category guess. Falls back
+  // to a full-text exact match (regex-escaped) when the heuristic found nothing.
+  $('gMatch').value = s.match || g.desc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  $('gCat').value = s.cat || ''; $('gSub').value = s.sub || '';
+  ($('gCat').value ? $('gSub') : $('gCat')).focus();
 }
 $('gCancel').onclick = () => $('guide').style.display = 'none';
 $('gApply').onclick = async () => {
@@ -394,7 +575,8 @@ $('gApply').onclick = async () => {
   const mode = document.querySelector('input[name=gMode]:checked').value;
   const body = {cat: $('gCat').value.trim(), sub: $('gSub').value.trim() || null};
   if (mode === 'rule') body.match = $('gMatch').value;
-  else body.ids = txns.filter(t => t.desc === gGroup.desc && t.cat === 'Uncategorized').map(t => t.id);
+  // manual mode: tag every uncategorized txn sharing this merchant token
+  else body.ids = txns.filter(t => t.merchant === gGroup.merchant && t.cat === 'Uncategorized').map(t => t.id);
   try {
     await api('/api/assign', {method: 'POST', body: JSON.stringify(body)});
     $('guide').style.display = 'none';
@@ -407,7 +589,19 @@ $('gApply').onclick = async () => {
 async function loadRules() {
   const rules = await api('/api/rules');
   $('rules').value = rules.map(r => [r.match, r.cat, r.sub].filter(Boolean).join(' ; ')).join('\n');
+  $('rulesCount').textContent = `· ${rules.length} rule${rules.length === 1 ? '' : 's'}`;
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('rulesList').innerHTML = rules.length
+    ? rules.map(r => `<div class="rrow"><span class="rx">${esc(r.match)}</span>
+        <span class="rcat">${esc(r.cat)}${r.sub ? ' · ' + esc(r.sub) : ''}</span></div>`).join('')
+    : '<span style="color:var(--muted)">No rules yet — tag uncategorized spend above to build them.</span>';
 }
+$('toggleRaw').onclick = () => {
+  const w = $('rawWrap'), open = w.style.display === 'none';
+  w.style.display = open ? 'block' : 'none';
+  $('rulesList').style.display = open ? 'none' : 'block';
+  $('toggleRaw').textContent = open ? 'done' : 'raw edit';
+};
 $('saveRules').onclick = async () => {
   const rules = $('rules').value.split('\n')
     .map(l => l.trim()).filter(l => l && !l.startsWith('#'))
@@ -421,6 +615,31 @@ $('saveRules').onclick = async () => {
     refresh();
   } catch (err) { alert(err.message); }
 };
+
+// ---------- Review card: category anomaly findings ----------
+async function loadReview() {
+  const findings = await api('/api/anomalies');
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const warns = findings.filter(f => f.severity === 'warn').length;
+  $('reviewCount').textContent = findings.length
+    ? `· ${findings.length} finding${findings.length === 1 ? '' : 's'}${warns ? ` (${warns} to fix)` : ''}`
+    : '';
+  const icon = sev => sev === 'warn' ? '⚠' : 'ⓘ';
+  const itemLabel = it => it.desc != null
+    ? `${esc(it.desc)} <b>${fmt(it.amount)}</b>`
+    : `${esc(it.name)} <b>${it.n}×</b>`;
+  $('reviewList').innerHTML = findings.length
+    ? findings.map(f => `
+      <div class="finding">
+        <div class="sev ${f.severity}">${icon(f.severity)}</div>
+        <div class="f-body">
+          <div class="f-title">${esc(f.title)}</div>
+          <div class="f-detail">${esc(f.detail)}</div>
+          <div class="f-items">${f.items.map(it => `<span class="it">${itemLabel(it)}</span>`).join('')}</div>
+        </div>
+      </div>`).join('')
+    : '<div class="clean">✓ No category issues detected.</div>';
+}
 
 refresh().catch(() => {});  // empty DB on first run is fine
 </script>

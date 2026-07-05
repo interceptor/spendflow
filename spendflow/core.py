@@ -101,10 +101,142 @@ def categorize(desc: str, compiled: list[tuple]) -> tuple[str, str | None]:
     return "Uncategorized", None
 
 
+# ---------- rule suggestion (local heuristic; no network) ----------
+# Statement descriptions look like:
+#   "Einkauf Migros MM Delémont | 22.05.2026, 15:33, Debit Mastercard-Nr. 557452xxxxxx2383"
+#   "Zahlung Sunrise GmbH | Postfach, 8050 Zurich | Bezahlt für: Michael Rudiger"
+# We want a stable merchant token ("Migros MM Delémont", "Sunrise GmbH") to build a
+# regex suggestion from, and a rough category guess. Both are just starting points
+# the user edits in the UI.
+
+# Leading transaction-type verbs Raiffeisen prints before the merchant name.
+_TXN_PREFIX = re.compile(
+    r"^(?:Einkauf|Zahlung|Gutschrift|Dauerauftrag(?:\s+Ausland)?|Bancomat\s+Bezug|"
+    r"Übertrag(?:\s+auf)?|Gebühr(?:enbelastung)?|Paketpreis)\s+", re.I)
+# Noise tokens that are never part of a merchant name.
+_NOISE = re.compile(
+    r"\b(?:GmbH|AG|SARL|Sàrl|SA|Merchant|Debit|Mastercard-Nr\.?|Kreditkarte)\b", re.I)
+
+# Continuation segments (after the first ' | ') that are NOT a purpose note:
+#   date/card line  "13.05.2026, 12:24, Debit Mastercard-Nr. 5xx"
+#   address line    "Route de Bâle 4, 2805 Soyhières"  (has a 4-5 digit postcode)
+#   "Bezahlt für: X" / SEPA/FX detail lines
+_NOTE_REJECT = re.compile(
+    r"^\d{2}\.\d{2}\.\d{2,4}[,\s]"           # leading date/time
+    r"|\b\d{4,5}\b"                          # postal code -> address
+    r"|Bezahlt für|Umrechnungskurs|SEPA|IBAN|CH\d{2}\b", re.I)
+
+
+def _purpose_note(segments: list[str]) -> str | None:
+    """The trailing free-text reference ('Savings Mia', 'MIETZINS WOHNUNG') that
+    distinguishes same-counterparty transactions, or None if the tail is just
+    date/card/address noise. Only the last segment is considered."""
+    if len(segments) < 2:
+        return None
+    tail = segments[-1].strip()
+    if not tail or _NOTE_REJECT.search(tail):
+        return None
+    return tail
+
+
+def _merchant_name(desc: str) -> str:
+    """The cleaned merchant name from the first segment (no note appended)."""
+    head = desc.split(" | ", 1)[0].strip()
+    s = _TXN_PREFIX.sub("", head)
+    s = _NOISE.sub("", s)
+    s = re.sub(r"\s{2,}", " ", s).strip(" .,-")
+    return s or head
+
+
+def merchant_token(desc: str) -> str:
+    """Best-effort merchant name from a raw statement description.
+
+    Takes the first ' | ' segment (the rest is date/card/address continuation),
+    strips the leading transaction verb and trailing corporate/noise tokens. If a
+    trailing purpose note is present (e.g. 'Savings Mia'), it is appended as
+    '<merchant> · <note>' so earmarked transfers to the same person stay distinct.
+    Falls back to the trimmed first segment if nothing usable remains.
+    """
+    name = _merchant_name(desc)
+    note = _purpose_note(desc.split(" | "))
+    return f"{name} · {note}" if note else name
+
+
+def _loose(text: str) -> str:
+    """Escape `text` into a regex matching its words in order, tolerating extra
+    words in between. Needed because _merchant_name strips interior noise tokens
+    (e.g. 'Selecta Merchant ven' -> name 'Selecta ven'); a literal 'Selecta ven'
+    would never match the original description. Joining words with '.*?' does."""
+    words = [re.escape(w) for w in text.split()]
+    return r".*?".join(words) if words else re.escape(text)
+
+
+def merchant_regex(desc: str) -> str:
+    """Regex that matches this merchant in a raw description. When a purpose note
+    distinguishes the transaction, require BOTH name and note (so 'Savings Mia' and
+    a plain payment to the same person get separate rules). Matches the desc, not
+    the ' · '-joined display token."""
+    name = _merchant_name(desc)
+    note = _purpose_note(desc.split(" | "))
+    if note:
+        return rf"{_loose(name)}.*{_loose(note)}"
+    return _loose(name)
+
+
+# Keyword -> (category, subcategory). First hit wins; matched case-insensitively
+# against the full description. Deliberately small and editable.
+_CATEGORY_HINTS: list[tuple[str, str, str | None]] = [
+    (r"salarzahlung|centris", "Income", "Salary"),
+    (r"mietzins", "Income", "Rent received"),
+    (r"verzinsung anteilschein", "Income", "Interest"),
+    (r"migros|aldi|aligro|landi|lebensmittel|mini lä|pakhäuser|denner|coop", "Groceries", None),
+    (r"selecta|station-shop|belleri", "Groceries", "Convenience"),
+    (r"phusila|giardino|perrest|sumup|restaurant|thai", "Dining", None),
+    (r"apotheke|pharmac", "Health", "Pharmacy"),
+    (r"world of games|kino|cinema", "Leisure", None),
+    (r"sunrise|wingo|swisscom|salt", "Telecom", None),
+    (r"bkw|energie|elektriz|strom", "Utilities", "Electricity"),
+    (r"rechtsschutz|assura|helsana|css |versicherung|insurance", "Insurance", None),
+    (r"contributions|trésorerie|tresorerie|canton du jura|rcju|steuer|impôt|impot", "Taxes", None),
+    (r"tea building|shoreditch|6th floor", "Housing", "Rent"),
+    (r"sparkonto|geschenksparkonto|savings", "Savings", None),
+    (r"sepa|money elyes|dauerauftrag ausland", "Transfers", "International"),
+    (r"dauerauftrag|bancomat|bezug", "Transfers", "Cash/Standing order"),
+    (r"kontoführung|paketpreis|gebühr|memberplus|sollzins|abschlussbetreffnis|"
+     r"saldierung|saldovortrag", "Bank fees", None),
+]
+_HINTS_COMPILED = [(re.compile(p, re.I), c, s) for p, c, s in _CATEGORY_HINTS]
+
+
+def suggest_category(desc: str) -> tuple[str | None, str | None]:
+    """Guess (cat, sub) for a description, or (None, None) if nothing matches."""
+    for rx, cat, sub in _HINTS_COMPILED:
+        if rx.search(desc):
+            return cat, sub
+    return None, None
+
+
+def suggest_rule(desc: str, learned: tuple[str, str | None] | None = None) -> dict:
+    """A ready-to-edit rule proposal: regex from merchant token + category guess.
+
+    `learned` (cat, sub) — e.g. how the user previously tagged this same merchant —
+    wins over the static seed map, so suggestions improve as the user categorizes.
+    `source` records where the guess came from: 'learned' | 'seed' | None.
+    """
+    token = merchant_token(desc)
+    if learned and learned[0]:
+        cat, sub, source = learned[0], learned[1], "learned"
+    else:
+        cat, sub = suggest_category(desc)
+        source = "seed" if cat else None
+    return {"match": merchant_regex(desc), "token": token, "cat": cat, "sub": sub, "source": source}
+
+
 # ---------- Raiffeisen PDF statements (Kontoauszug) ----------
-_MONEY = r"\d{1,3}(?:'\d{3})*\.\d{2}"
-_ENTRY = re.compile(rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+(.+?)\s+({_MONEY})\s+({_MONEY})$")
-_OPENING = re.compile(rf"^\d{{2}}\.\d{{2}}\.\d{{2}}\s+Saldovortrag\s+({_MONEY})$")
+_MONEY = r"\d{1,3}(?:'\d{3})*\.\d{2}"     # amount column: always unsigned
+_BAL = rf"-?{_MONEY}"                     # Saldo column: negative when overdrawn
+_ENTRY = re.compile(rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+(.+?)\s+({_MONEY})\s+({_BAL})$")
+_OPENING = re.compile(rf"^\d{{2}}\.\d{{2}}\.\d{{2}}\s+Saldovortrag\s+({_BAL})$")
 _TABLE_END = re.compile(rf"^(Umsatz|Übertrag)\s+{_MONEY}")  # summary rows, no date
 _VALUTA = re.compile(r"^\(\d{2}\.\d{2}\.\d{2}\)\s*")
 
@@ -149,3 +281,146 @@ def parse_raiffeisen(text: str) -> list[dict]:
     if not txns:
         raise ValueError("No statement entries found - not a Raiffeisen Kontoauszug?")
     return txns
+
+
+# ---------- category anomaly detection (pure; feeds the Review card) ----------
+def _norm_cat(s: str) -> str:
+    """Normalize a category/subcategory name for near-duplicate comparison:
+    case-fold and drop spaces/hyphens so 'Bank fees' ~ 'bank-fees' ~ 'Bankfees'."""
+    return re.sub(r"[\s\-_]+", "", (s or "").casefold())
+
+
+def detect_anomalies(txns: list[dict]) -> list[dict]:
+    """Scan categorized transactions for likely category-hygiene problems.
+
+    Returns findings [{type, severity, title, detail, items}] where type is one of
+    'duplicate' | 'cross_level' | 'singleton' | 'outlier'. Pure: takes the txn
+    dicts (needs cat, sub, amount, desc), returns data the UI renders. No I/O.
+    """
+    cat_txns: dict[str, list[dict]] = {}
+    subs: set[str] = set()
+    for t in txns:
+        c = t.get("cat")
+        if c and c != "Uncategorized":
+            cat_txns.setdefault(c, []).append(t)
+        if t.get("sub"):
+            subs.add(t["sub"])
+    cats = set(cat_txns)
+    out: list[dict] = []
+
+    # 1) near-duplicate category names (case/space/hyphen only)
+    by_norm: dict[str, set[str]] = {}
+    for c in cats:
+        by_norm.setdefault(_norm_cat(c), set()).add(c)
+    for variants in by_norm.values():
+        if len(variants) > 1:
+            names = sorted(variants, key=lambda c: -len(cat_txns[c]))  # most-used first
+            out.append({
+                "type": "duplicate", "severity": "warn",
+                "title": f"Duplicate category: {' / '.join(names)}",
+                "detail": f"These names differ only by case or spacing. Merge into "
+                          f"'{names[0]}'?",
+                "items": [{"name": c, "n": len(cat_txns[c])} for c in names]})
+
+    # 2) a name used as BOTH a category and a subcategory (causes Sankey loops)
+    for name in sorted(cats & subs):
+        out.append({
+            "type": "cross_level", "severity": "warn",
+            "title": f"'{name}' is both a category and a subcategory",
+            "detail": "Reusing a name at two levels is confusing and distorts the "
+                      "flow chart. Rename one of them.",
+            "items": [{"name": name, "n": len(cat_txns.get(name, []))}]})
+
+    # 3) singleton categories (a single transaction — possible typo / stray)
+    singletons = sorted((c for c in cats if len(cat_txns[c]) == 1))
+    if singletons:
+        out.append({
+            "type": "singleton", "severity": "info",
+            "title": f"{len(singletons)} categor{'y' if len(singletons)==1 else 'ies'} "
+                     f"with a single transaction",
+            "detail": "Might be a typo or a one-off worth folding into another category.",
+            "items": [{"name": c, "n": 1} for c in singletons]})
+
+    # 4) amount outliers within a category (robust: median + MAD)
+    for c, ts in cat_txns.items():
+        amts = sorted(abs(t["amount"]) for t in ts)
+        if len(amts) < 4:
+            continue  # too few points to call anything an outlier
+        mid = len(amts) // 2
+        median = amts[mid] if len(amts) % 2 else (amts[mid - 1] + amts[mid]) / 2
+        devs = sorted(abs(a - median) for a in amts)
+        mmid = len(devs) // 2
+        mad = devs[mmid] if len(devs) % 2 else (devs[mmid - 1] + devs[mmid]) / 2
+        if mad == 0:
+            continue  # no spread -> nothing to flag
+        flagged = []
+        for t in ts:
+            score = abs(abs(t["amount"]) - median) / (1.4826 * mad)  # ~z-score
+            if score >= 5 and abs(t["amount"]) > median * 3:
+                flagged.append({"desc": (t.get("desc") or "")[:60],
+                                "amount": t["amount"], "score": round(score, 1)})
+        if flagged:
+            flagged.sort(key=lambda f: -abs(f["amount"]))
+            out.append({
+                "type": "outlier", "severity": "info",
+                "title": f"Unusual amount in '{c}'",
+                "detail": f"Far outside this category's typical spend "
+                          f"(median {median:.0f}). Check for a mis-categorization.",
+                "items": flagged})
+
+    return out
+
+
+# ---------- Viseca (Raiffeisen) credit-card statements ----------
+_VISECA_TXN = re.compile(
+    rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+\d{{2}}\.\d{{2}}\.\d{{2}}\s+(.+?)"
+    rf"(?:\s+([A-Z]{{3}})\s+({_MONEY}))?"       # optional foreign currency + amount
+    rf"\s+({_MONEY})$")
+_VISECA_TOTAL = re.compile(rf"^Total Karte .*?({_MONEY})$")
+_VISECA_PAYMENT = re.compile(r"Ihre Zahlung")   # previous bill's payment, not a purchase
+_VISECA_NOISE = re.compile(
+    r"^(Übertrag|Zwischensumme|Total|Seite|Herausgegeben|Ihrer Raiffeisen|"
+    r"Viseca|Hagenholz|\d{4,5} |CH-|Datum |Karten|\d{4} \d{2}XX|Globallimite|"
+    r"Fälliger|Zahlung über|Ab dem|Abtretung|Services SA|P\.P\.|Response|"
+    r"Kundenservice|Telefon|Herr|Michael|Route|Abrechnung|Zahlbar|PayNet|"
+    r"Kontoinhaber|Bearbeitungsgebühr|Umrechnungskurs)")
+
+
+def parse_viseca(text: str) -> tuple[list[dict], float | None]:
+    """Viseca credit-card statement (pdfplumber text) -> (purchases, total).
+
+    One negative txn per purchase. The 'Betrag in CHF' column already includes the
+    1.5% Bearbeitungsgebühr, so that fee line is informational and ignored (folding
+    it would double-count). The single merchant-category line after each purchase
+    (e.g. 'Warenhäuser') is appended to the description. `total` is the stated
+    'Total Karte', used to reconcile against the lump-sum bank debit; the item sum
+    is checked against it as an integrity guard.
+    """
+    txns: list[dict] = []
+    total: float | None = None
+    current: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if m := _VISECA_TOTAL.match(line):
+            total, current = parse_amount(m.group(1)), None
+        elif _VISECA_PAYMENT.search(line):
+            current = None
+        elif (m := _VISECA_TXN.match(line)) and not _VISECA_NOISE.match(line):
+            date, details, fccy, famt, chf = m.groups()
+            desc = details.strip() + (f" | {fccy} {famt}" if fccy else "")
+            current = {"date": parse_date(date), "desc": desc,
+                       "amount": -parse_amount(chf), "currency": "CHF"}
+            txns.append(current)
+        elif current is not None and not _VISECA_NOISE.match(line):
+            current["desc"] += " | " + line   # merchant-category tag
+            current = None                    # only the immediate next line counts
+
+    if not txns:
+        raise ValueError("No credit-card transactions found - not a Viseca statement?")
+    if total is not None:
+        s = round(-sum(t["amount"] for t in txns), 2)
+        if abs(s - total) > 0.05:
+            raise ValueError(f"CC total mismatch: items sum {s} != stated {total}")
+    return txns, total

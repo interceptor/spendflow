@@ -54,6 +54,138 @@ def test_manual_tag_survives_rule_reapply(client):
     assert (t["cat"], t["sub"], t["source"]) == ("Travel", "Holiday", "manual")
 
 
+def test_uncategorized_carries_merchant_and_suggestion(client):
+    client.post("/api/import/txns", json=TXNS)
+    groups = client.get("/api/uncategorized").json()
+    migros = next(g for g in groups if "MIGROS" in g["merchant"])
+    assert migros["n"] == 2                       # both MIGROS rows grouped by merchant
+    assert migros["suggest"]["cat"] == "Groceries"  # seed guess
+    assert migros["suggest"]["source"] == "seed"
+
+
+def test_suggestion_learns_from_prior_tag(client):
+    # Two different merchants that share no seed category; tag one manually,
+    # then a second txn of the SAME merchant must inherit it as a 'learned' hint.
+    client.post("/api/import/txns", json=[
+        {"date": "2026-06-01", "desc": "Zahlung Bob's Widgets | 8004 Zürich", "amount": -10},
+        {"date": "2026-06-09", "desc": "Zahlung Bob's Widgets | 8004 Zürich", "amount": -20},
+    ])
+    txns = client.get("/api/txns").json()
+    assert txns[0]["merchant"] == txns[1]["merchant"] == "Bob's Widgets"
+    client.post("/api/assign", json={"ids": [txns[0]["id"]], "cat": "Hobbies"})
+    grp = next(g for g in client.get("/api/uncategorized").json()
+               if g["merchant"] == "Bob's Widgets")
+    assert grp["n"] == 1                                   # the untagged one remains
+    assert (grp["suggest"]["cat"], grp["suggest"]["source"]) == ("Hobbies", "learned")
+
+
+def test_migration_backfills_merchant(client, tmp_path):
+    # Simulate a pre-merchant DB: insert a row without the column populated,
+    # reload the app (runs init/migration), and confirm the token is backfilled.
+    import sqlite3, importlib
+    from spendflow import app as app_mod
+    con = sqlite3.connect(tmp_path / "spendflow.db")
+    con.execute("UPDATE txn SET merchant=NULL")   # table exists from fixture startup
+    con.execute("INSERT INTO txn (hash, amount, desc, merchant) VALUES ('h1', -5, "
+                "'Einkauf Coop Pronto | 01.01.2026, Debit', NULL)")
+    con.commit(); con.close()
+    importlib.reload(app_mod)
+    with TestClient(app_mod.app) as c:
+        row = next(t for t in c.get("/api/txns").json() if t["hash"] == "h1")
+        assert row["merchant"] == "Coop Pronto"
+
+
+def test_uncategorized_income_kind(client):
+    client.post("/api/import/txns", json=TXNS)  # includes ACME AG LOHN income
+    inc = client.get("/api/uncategorized", params={"kind": "income"}).json()
+    exp = client.get("/api/uncategorized", params={"kind": "expense"}).json()
+    assert any("ACME" in g["merchant"] for g in inc)      # income appears under income
+    assert all(g["total"] > 0 for g in inc)
+    assert not any("ACME" in g["merchant"] for g in exp)  # and not under expenses
+
+
+def test_rule_matches_despite_stripped_interior_word(client):
+    # regression: 'Merchant' is stripped from the token; the auto-suggested rule
+    # must still match and clear the group.
+    client.post("/api/import/txns", json=[
+        {"date": "2026-06-01", "desc": "Einkauf Selecta Merchant ven | 01.06.2026, Debit", "amount": -2}])
+    g = client.get("/api/uncategorized").json()[0]
+    assert g["merchant"] == "Selecta ven"
+    client.post("/api/assign", json=g["suggest"])         # accept the suggestion as a rule
+    assert client.get("/api/uncategorized").json() == []  # group is gone
+
+
+def test_assign_uncategorized_untags_not_pins(client):
+    # assigning 'Uncategorized' must not create a manual pin immune to rules
+    client.post("/api/import/txns", json=TXNS)
+    tid = next(t["id"] for t in client.get("/api/txns").json() if "MIGROS" in t["desc"])
+    client.post("/api/assign", json={"ids": [tid], "cat": "Groceries"})   # manual pin
+    client.post("/api/assign", json={"ids": [tid], "cat": "Uncategorized"})  # untag
+    t = next(t for t in client.get("/api/txns").json() if t["id"] == tid)
+    assert (t["cat"], t["source"]) == ("Uncategorized", "rule")  # rule-controlled again
+    # a later rule can now reclassify it
+    client.post("/api/assign", json={"match": "migros", "cat": "Food"})
+    t = next(t for t in client.get("/api/txns").json() if t["id"] == tid)
+    assert t["cat"] == "Food"
+
+
+CC_TEXT = """Datum Valuta Details Währung Betrag Betrag in CHF
+27.03.26 13.03.26 Ihre Zahlung - Danke 100.00-
+10.03.26 13.03.26 PAYPAL *TEMU, 123 IE CHF 60.00 60.00
+Warenhäuser
+13.03.26 16.03.26 Lidl Delemont, CH 40.00
+Supermärkte, Lebensmittel
+Total Karte Visa Gold 4763 14XX XXXX 0730 100.00
+"""
+
+
+def test_cc_reconciles_against_bank_debit(client):
+    from spendflow import app as app_mod
+    # a bank debit that paid the Viseca bill (100.00) already exists
+    client.post("/api/import/txns", json=[
+        {"date": "2026-04-27", "desc": "Zahlung Viseca Payment Services AG", "amount": -100.00},
+        {"date": "2026-04-01", "desc": "Einkauf Coop", "amount": -25.00}])
+    res = app_mod._import_cc(CC_TEXT)
+    assert res["reconciled"] is True and res["imported"] == 2
+
+    txns = client.get("/api/txns").json()
+    parent = next(t for t in txns if "Viseca" in t["desc"])
+    kids = [t for t in txns if t["parent_id"] == parent["id"]]
+    assert parent["reconciled"] == 1
+    assert len(kids) == 2
+    assert round(sum(t["amount"] for t in kids), 2) == parent["amount"]  # no double-count
+
+    # reconciled parent is excluded from monthly stats; children (dated to when the
+    # purchases happened, March) are counted in their own month instead.
+    stats = client.get("/api/stats/monthly").json()
+    apr = sum(r["spent"] for r in stats if r["month"] == "2026-04")
+    mar = sum(r["spent"] for r in stats if r["month"] == "2026-03")
+    assert round(apr, 2) == 25.00   # only Coop; the 100 Viseca lump-sum is excluded
+    assert round(mar, 2) == 100.00  # the CC line items land in March, not doubled
+
+
+def test_uncategorized_flags_credit_card(client):
+    from spendflow import app as app_mod
+    client.post("/api/import/txns", json=[
+        {"date": "2026-04-27", "desc": "Zahlung Viseca Payment Services AG", "amount": -100.00},
+        {"date": "2026-04-01", "desc": "Einkauf Coop Pronto", "amount": -25.00}])
+    app_mod._import_cc(CC_TEXT)   # imports TEMU + Lidl as CC children
+    groups = {g["merchant"]: g for g in client.get("/api/uncategorized").json()}
+    assert any(g["is_cc"] for m, g in groups.items() if "TEMU" in m)   # CC item flagged
+    coop = next(g for m, g in groups.items() if "Coop" in m)
+    assert not coop["is_cc"]                                            # bank item not flagged
+
+
+def test_anomalies_endpoint(client):
+    client.post("/api/import/txns", json=TXNS)
+    # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding
+    ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
+    findings = client.get("/api/anomalies").json()
+    assert any(f["type"] == "duplicate" for f in findings)
+
+
 def test_assign_validates(client):
     assert client.post("/api/assign", json={"cat": "X"}).status_code == 422
     assert client.post("/api/assign",
