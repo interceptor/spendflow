@@ -82,8 +82,8 @@ def test_categorize():
         {"match": "sbb", "cat": "Transport", "sub": "Public transport"},
         {"match": "([bad", "cat": "Broken"},  # invalid regex must be skipped
     ])
-    assert categorize("MIGROS ZUERICH", rules) == ("Groceries", None)
-    assert categorize("SBB EasyRide", rules) == ("Transport", "Public transport")
+    assert categorize("MIGROS ZUERICH", rules) == ("groceries", None)
+    assert categorize("SBB EasyRide", rules) == ("transport", "public transport")
     assert categorize("Unknown Corp", rules) == ("Uncategorized", None)
 
 
@@ -219,7 +219,19 @@ def test_merchant_token_fallback():
     ("MYSTERY, Y | Transportdienstleistungen", "Transport", None),
 ])
 def test_suggest_category(desc, cat, sub):
-    assert suggest_category(desc) == (cat, sub)
+    # the hint table is authored in readable title case; suggestions come back in
+    # the canonical lowercase form, so the expectations are normalized here rather
+    # than duplicated in lowercase above
+    assert suggest_category(desc) == (cat.lower(), sub.lower() if sub else None)
+
+
+def test_seed_hints_never_emit_uppercase():
+    """Every category the seed map can produce must already be canonical, so a
+    cold-start suggestion can't reintroduce a capitalized duplicate."""
+    from spendflow.core import _CATEGORY_HINTS, norm_name
+    for _, cat, sub in _CATEGORY_HINTS:
+        assert norm_name(cat) == cat.lower()
+        assert sub is None or norm_name(sub) == sub.lower()
 
 
 def test_suggest_category_unknown():
@@ -228,7 +240,7 @@ def test_suggest_category_unknown():
 
 def test_suggest_rule_shape_and_regex_safe():
     r = suggest_rule("Einkauf SumUp *Phusila Thai | 06.05.2026, Debit")
-    assert r["cat"] == "Dining"
+    assert r["cat"] == "dining"
     assert r["source"] == "seed"
     assert set(r) == {"match", "token", "cat", "sub", "source"}
     # match must be a valid regex even though the token contains '*'
@@ -238,9 +250,9 @@ def test_suggest_rule_shape_and_regex_safe():
 
 def test_suggest_rule_learned_overrides_seed():
     desc = "Einkauf Selecta Merchant ven | 07.05.2026, Debit"
-    assert suggest_rule(desc)["cat"] == "Groceries"          # seed guess
-    r = suggest_rule(desc, learned=("Dining", "Vending"))    # user tagged it thus
-    assert (r["cat"], r["sub"], r["source"]) == ("Dining", "Vending", "learned")
+    assert suggest_rule(desc)["cat"] == "groceries"          # seed guess
+    r = suggest_rule(desc, learned=("dining", "vending"))    # user tagged it thus
+    assert (r["cat"], r["sub"], r["source"]) == ("dining", "vending", "learned")
 
 
 def test_suggest_rule_no_guess():
@@ -286,6 +298,38 @@ def test_anomaly_duplicate_names():
     assert names == {"taxes", "Taxes"}
     # most-used variant is suggested as the merge target ('taxes' has 2)
     assert dup["items"][0]["name"] == "taxes"
+
+
+def test_anomaly_near_duplicate_plural():
+    # 'transfer' vs 'Transfers' differ by more than case -> the stem tier catches it
+    txns = [{"cat": "Transfers", "sub": None, "amount": -1, "desc": "a"},
+            {"cat": "Transfers", "sub": None, "amount": -2, "desc": "b"},
+            {"cat": "transfer", "sub": None, "amount": -3, "desc": "c"}]
+    near = next(a for a in detect_anomalies(txns) if a["type"] == "near_duplicate")
+    assert {i["name"] for i in near["items"]} == {"Transfers", "transfer"}
+    # most-used wins the merge target
+    assert near["action"]["ops"] == [{"level": "cat", "old": "transfer",
+                                      "new": "Transfers"}]
+
+
+def test_anomaly_near_duplicate_not_reported_twice():
+    # pure case variants belong to 'duplicate'; the stem tier must not re-report them
+    txns = [{"cat": "taxes", "sub": None, "amount": -1, "desc": "a"},
+            {"cat": "Taxes", "sub": None, "amount": -2, "desc": "b"}]
+    types = [a["type"] for a in detect_anomalies(txns)]
+    assert types.count("duplicate") == 1 and "near_duplicate" not in types
+
+
+def test_stem_cat_folds_plurals_conservatively():
+    from spendflow.core import _stem_cat
+    assert _stem_cat("Transfers") == _stem_cat("transfer")
+    assert _stem_cat("Groceries") == _stem_cat("grocery")
+    assert _stem_cat("taxes") == _stem_cat("tax")
+    # short words and genuine -ss endings are left alone
+    assert _stem_cat("gas") == "gas"
+    assert _stem_cat("business") == "business"
+    # distinct concepts must NOT collide
+    assert _stem_cat("Housing") != _stem_cat("household")
 
 
 def test_anomaly_cross_level():

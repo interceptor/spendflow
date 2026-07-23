@@ -83,12 +83,29 @@ def parse_camt(xml_text: str) -> list[dict]:
     return out
 
 
+def norm_name(s: str | None) -> str | None:
+    """Canonical form for a category/subcategory name: lowercase, collapsed spaces.
+
+    Category names are case-insensitive identifiers, so storing one canonical form
+    removes a whole class of near-duplicates ('Taxes' vs 'taxes') at the source
+    instead of detecting them after the fact. 'Uncategorized' is the one reserved
+    sentinel the rest of the code compares against literally, so it is preserved.
+    """
+    if s is None:
+        return None
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return None
+    return "Uncategorized" if s.casefold() == "uncategorized" else s.casefold()
+
+
 def compile_rules(rules: list[dict]) -> list[tuple]:
     """[{match, cat, sub}] -> [(compiled_re, cat, sub)], silently skipping invalid regexes."""
     out = []
     for r in rules:
         try:
-            out.append((re.compile(r["match"], re.I), r["cat"], r.get("sub")))
+            out.append((re.compile(r["match"], re.I),
+                        norm_name(r["cat"]) or "Uncategorized", norm_name(r.get("sub"))))
         except re.error:
             pass
     return out
@@ -226,10 +243,13 @@ _HINTS_COMPILED = [(re.compile(p, re.I), c, s) for p, c, s in _CATEGORY_HINTS]
 
 
 def suggest_category(desc: str) -> tuple[str | None, str | None]:
-    """Guess (cat, sub) for a description, or (None, None) if nothing matches."""
+    """Guess (cat, sub) for a description, or (None, None) if nothing matches.
+
+    The hint table above is written in readable title case; names are normalized on
+    the way out so suggestions never reintroduce capitalized variants."""
     for rx, cat, sub in _HINTS_COMPILED:
         if rx.search(desc):
-            return cat, sub
+            return norm_name(cat), norm_name(sub)
     return None, None
 
 
@@ -307,6 +327,26 @@ def _norm_cat(s: str) -> str:
     return re.sub(r"[\s\-_]+", "", (s or "").casefold())
 
 
+def _stem_cat(s: str) -> str:
+    """Looser key than _norm_cat: also folds English plurals, so 'transfer' ~
+    'Transfers' and 'fee' ~ 'fees' collide. Deliberately crude — it only needs to
+    group candidates the user then confirms, never to rewrite anything on its own.
+
+    Order matters: 'ies'->'y' before the bare 's' strip, so 'groceries'->'grocery'
+    rather than 'grocerie'. Words of 3 chars or fewer are left alone ('gas').
+    """
+    w = _norm_cat(s)
+    if len(w) <= 3:
+        return w
+    if w.endswith("ies"):
+        return w[:-3] + "y"
+    if w.endswith(("ses", "xes", "zes", "ches", "shes")):
+        return w[:-2]
+    if w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
 def detect_anomalies(txns: list[dict]) -> list[dict]:
     """Scan categorized transactions for likely category-hygiene problems.
 
@@ -325,7 +365,9 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
     cats = set(cat_txns)
     out: list[dict] = []
 
-    # 1) near-duplicate category names (case/space/hyphen only)
+    # 1) near-duplicate category names.
+    # Two tiers: exact variants (case/space/hyphen — certainly the same category)
+    # and stem-level matches (singular/plural — very likely, but the user confirms).
     by_norm: dict[str, set[str]] = {}
     for c in cats:
         by_norm.setdefault(_norm_cat(c), set()).add(c)
@@ -343,6 +385,25 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
                 # one-click fix: merge each minority variant into the most-used name
                 "action": {"label": f"Merge into '{keep}'",
                            "ops": [{"level": "cat", "old": m, "new": keep} for m in merge]}})
+
+    # Stem-level groups spanning MORE than one exact-variant group, e.g.
+    # {'transfer'} + {'Transfers'}. Groups already reported above are skipped.
+    by_stem: dict[str, set[str]] = {}
+    for c in cats:
+        by_stem.setdefault(_stem_cat(c), set()).add(c)
+    for variants in by_stem.values():
+        if len({_norm_cat(c) for c in variants}) < 2:
+            continue  # single exact-variant group: either fine, or already reported
+        names = sorted(variants, key=lambda c: (-len(cat_txns[c]), c))
+        keep, *merge = names
+        out.append({
+            "type": "near_duplicate", "severity": "warn",
+            "title": f"Similar categories: {' / '.join(names)}",
+            "detail": f"These look like singular/plural forms of one category. "
+                      f"Merge into '{keep}'?",
+            "items": [{"name": c, "n": len(cat_txns[c])} for c in names],
+            "action": {"label": f"Merge into '{keep}'",
+                       "ops": [{"level": "cat", "old": m, "new": keep} for m in merge]}})
 
     # 2) a name used as BOTH a category and a subcategory (causes Sankey loops)
     for name in sorted(cats & subs):
