@@ -178,12 +178,49 @@ def test_uncategorized_flags_credit_card(client):
 
 def test_anomalies_endpoint(client):
     client.post("/api/import/txns", json=TXNS)
-    # tag MIGROS as 'taxes' and SBB as 'Taxes' -> a duplicate-name finding
+    # two txns tagged with case-variants of one name -> a duplicate-name finding
     ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
-    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "taxes"})
-    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "Taxes"})
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "Shopping"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "shopping"})
     findings = client.get("/api/anomalies").json()
     assert any(f["type"] == "duplicate" for f in findings)
+
+
+def test_merge_duplicate_category_action(client):
+    client.post("/api/import/txns", json=TXNS)
+    ids = {t["desc"]: t["id"] for t in client.get("/api/txns").json()}
+    client.post("/api/assign", json={"ids": [ids["MIGROS ZUERICH"]], "cat": "Shopping"})
+    client.post("/api/assign", json={"ids": [ids["SBB EasyRide"]], "cat": "shopping"})
+    dup = next(f for f in client.get("/api/anomalies").json() if f["type"] == "duplicate")
+    keep = dup["action"]["ops"][0]["new"]         # the winning variant
+    gone = {op["old"] for op in dup["action"]["ops"]}
+    # execute the finding's one-click action
+    for op in dup["action"]["ops"]:
+        assert client.post("/api/category/rename", json=op).status_code == 200
+    # both variants collapsed into the kept one, no more duplicate finding
+    cats = {t["cat"] for t in client.get("/api/txns").json() if t["cat"] != "Uncategorized"}
+    assert keep in cats and not (gone & cats)
+    assert not any(f["type"] == "duplicate" for f in client.get("/api/anomalies").json())
+
+
+def test_rename_cat_rewrites_rules(client):
+    client.post("/api/import/txns", json=TXNS)
+    client.post("/api/assign", json={"match": "migros", "cat": "grocery"})
+    client.post("/api/category/rename", json={"level": "cat", "old": "grocery", "new": "Groceries"})
+    assert client.get("/api/rules").json()[0]["cat"] == "Groceries"       # rule rewritten
+    assert any(t["cat"] == "Groceries" for t in client.get("/api/txns").json())  # txns too
+
+
+def test_rename_sub_scoped_to_category(client):
+    client.post("/api/import/txns", json=TXNS)
+    tids = [t["id"] for t in client.get("/api/txns").json()]
+    client.post("/api/assign", json={"ids": [tids[0]], "cat": "A", "sub": "x"})
+    client.post("/api/assign", json={"ids": [tids[1]], "cat": "B", "sub": "x"})
+    # rename sub 'x' only under category A
+    client.post("/api/category/rename",
+                json={"level": "sub", "old": "x", "new": "y", "sub_of": "A"})
+    subs = {(t["cat"], t["sub"]) for t in client.get("/api/txns").json() if t["sub"]}
+    assert ("A", "y") in subs and ("B", "x") in subs  # only A's sub renamed
 
 
 def test_assign_validates(client):

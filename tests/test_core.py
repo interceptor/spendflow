@@ -208,6 +208,15 @@ def test_merchant_token_fallback():
     ("Übertrag auf Mitglieder Sparkonto CH39 ... | Savings", "Savings", None),
     ("Gutschrift CENTRIS AG | ... | Salarzahlung", "Income", "Salary"),
     ("Gebührenbelastung Kontoführung | ...", "Bank fees", None),
+    # credit-card merchants
+    ("SBB CFF FFS Mobile Ticket, Bern CH | ...", "Transport", "Public transport"),
+    ("CLAUDE.AI SUBSCRIPTION, ANTHROPIC.COM US | ...", "Software", "AI"),
+    ("TIDAL, Malmo SE | Digitalprodukte, Filme, Musik", "Subscriptions", "Media"),
+    ("digitec Galaxus (Online), Zurich CH | Warenhäuser", "Shopping", "Online"),
+    ("WEB AMENDE.GOUV 2358596, 35RENNES FR | ...", "Fines", None),
+    # Viseca category-tag fallback when the merchant name isn't known
+    ("SOME UNKNOWN SHOP, X | Shopping-Abonnements", "Subscriptions", None),
+    ("MYSTERY, Y | Transportdienstleistungen", "Transport", None),
 ])
 def test_suggest_category(desc, cat, sub):
     assert suggest_category(desc) == (cat, sub)

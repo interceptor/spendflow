@@ -84,7 +84,8 @@
                      border-bottom:1px solid var(--line); }
   #rulesList .rx { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #rulesList .rcat { color:var(--accent); white-space:nowrap; }
-  #reviewList .finding { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  #reviewList .finding { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); align-items:flex-start; }
+  #reviewList .f-fix { flex:0 0 auto; align-self:center; white-space:nowrap; }
   #reviewList .finding:last-child { border-bottom:none; }
   #reviewList .sev { flex:0 0 auto; font-size:15px; line-height:1.3; }
   #reviewList .sev.warn { color:#e0b06a; } #reviewList .sev.info { color:var(--muted); }
@@ -628,8 +629,9 @@ async function loadReview() {
   const itemLabel = it => it.desc != null
     ? `${esc(it.desc)} <b>${fmt(it.amount)}</b>`
     : `${esc(it.name)} <b>${it.n}×</b>`;
+  reviewFindings = findings;
   $('reviewList').innerHTML = findings.length
-    ? findings.map(f => `
+    ? findings.map((f, i) => `
       <div class="finding">
         <div class="sev ${f.severity}">${icon(f.severity)}</div>
         <div class="f-body">
@@ -637,8 +639,21 @@ async function loadReview() {
           <div class="f-detail">${esc(f.detail)}</div>
           <div class="f-items">${f.items.map(it => `<span class="it">${itemLabel(it)}</span>`).join('')}</div>
         </div>
+        ${f.action ? `<button class="small primary f-fix" data-fix="${i}">${esc(f.action.label)}</button>` : ''}
       </div>`).join('')
     : '<div class="clean">✓ No category issues detected.</div>';
+  $('reviewList').querySelectorAll('button[data-fix]').forEach(b =>
+    b.onclick = () => applyFix(reviewFindings[+b.dataset.fix]));
+}
+
+let reviewFindings = [];
+async function applyFix(f) {
+  try {
+    for (const op of f.action.ops)      // usually one op; duplicates may merge several
+      await api('/api/category/rename', {method: 'POST', body: JSON.stringify(op)});
+    toast(f.action.label + ' — done');
+    refresh();
+  } catch (err) { alert(err.message); }
 }
 
 refresh().catch(() => {});  // empty DB on first run is fine

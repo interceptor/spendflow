@@ -204,6 +204,23 @@ _CATEGORY_HINTS: list[tuple[str, str, str | None]] = [
     (r"dauerauftrag|bancomat|bezug", "Transfers", "Cash/Standing order"),
     (r"kontoführung|paketpreis|gebühr|memberplus|sollzins|abschlussbetreffnis|"
      r"saldierung|saldovortrag", "Bank fees", None),
+    # --- credit-card merchants (mostly digital subscriptions / online) ---
+    (r"sbb|cff|ffs|mobile ticket", "Transport", "Public transport"),
+    (r"claude\.ai|anthropic|openai|chatgpt|google \*grok", "Software", "AI"),
+    (r"tidal|spotify|prime video|netflix|crunchyroll|disney|audible", "Subscriptions", "Media"),
+    (r"digitalrepublic|starlink", "Telecom", None),
+    (r"digitec|galaxus|temu|iherb|amzn|amazon", "Shopping", "Online"),
+    (r"battle\.net|steam|epic games|nintendo", "Leisure", "Games"),
+    (r"amende|busse|fine|police", "Fines", None),
+    # --- Viseca merchant-category tags (fallback: they classify their own txns) ---
+    (r"supermärkte|lebensmittel", "Groceries", None),
+    (r"drogerien|apotheken", "Health", "Pharmacy"),
+    (r"transportdienstleistungen", "Transport", None),
+    (r"digitalprodukte|computersoftware|it services|software", "Software", None),
+    (r"shopping-abonnements|abonnement", "Subscriptions", None),
+    (r"warenhäuser|spezialgeschäfte", "Shopping", None),
+    (r"telekommunikation|internet, webhosting", "Telecom", None),
+    (r"kosmetik|parfümerie", "Personal care", None),
 ]
 _HINTS_COMPILED = [(re.compile(p, re.I), c, s) for p, c, s in _CATEGORY_HINTS]
 
@@ -314,13 +331,18 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
         by_norm.setdefault(_norm_cat(c), set()).add(c)
     for variants in by_norm.values():
         if len(variants) > 1:
-            names = sorted(variants, key=lambda c: -len(cat_txns[c]))  # most-used first
+            # most-used first; ties broken alphabetically for a deterministic keeper
+            names = sorted(variants, key=lambda c: (-len(cat_txns[c]), c))
+            keep, *merge = names
             out.append({
                 "type": "duplicate", "severity": "warn",
                 "title": f"Duplicate category: {' / '.join(names)}",
                 "detail": f"These names differ only by case or spacing. Merge into "
-                          f"'{names[0]}'?",
-                "items": [{"name": c, "n": len(cat_txns[c])} for c in names]})
+                          f"'{keep}'?",
+                "items": [{"name": c, "n": len(cat_txns[c])} for c in names],
+                # one-click fix: merge each minority variant into the most-used name
+                "action": {"label": f"Merge into '{keep}'",
+                           "ops": [{"level": "cat", "old": m, "new": keep} for m in merge]}})
 
     # 2) a name used as BOTH a category and a subcategory (causes Sankey loops)
     for name in sorted(cats & subs):
@@ -328,8 +350,12 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
             "type": "cross_level", "severity": "warn",
             "title": f"'{name}' is both a category and a subcategory",
             "detail": "Reusing a name at two levels is confusing and distorts the "
-                      "flow chart. Rename one of them.",
-            "items": [{"name": name, "n": len(cat_txns.get(name, []))}]})
+                      "flow chart. Rename the subcategory use to disambiguate.",
+            "items": [{"name": name, "n": len(cat_txns.get(name, []))}],
+            # one-click fix: rename the *subcategory* occurrences (leaves the
+            # category, which usually has more transactions, untouched)
+            "action": {"label": f"Rename sub → '{name} (sub)'",
+                       "ops": [{"level": "sub", "old": name, "new": f"{name} (sub)"}]}})
 
     # 3) singleton categories (a single transaction — possible typo / stray)
     singletons = sorted((c for c in cats if len(cat_txns[c]) == 1))
