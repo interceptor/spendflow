@@ -21,6 +21,23 @@
   header .sub { color:var(--muted); font-size:13px; }
   .wrap { padding:0 24px 40px; max-width:1400px; margin:0 auto; }
 
+  /* tab bar */
+  #tabs { display:flex; gap:2px; padding:0 24px; border-bottom:1px solid var(--line);
+          max-width:1400px; margin:0 auto; flex-wrap:wrap; }
+  #tabs button { background:none; border:none; border-bottom:2px solid transparent;
+                 border-radius:0; color:var(--muted); font-size:13.5px; font-weight:500;
+                 padding:9px 14px; cursor:pointer; white-space:nowrap; }
+  #tabs button:hover { color:var(--text); background:var(--panel); }
+  #tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  #tabs button .badge { display:inline-block; margin-left:6px; padding:0 6px;
+                        border-radius:9px; font-size:10.5px; font-weight:600;
+                        background:var(--panel2); color:var(--muted); }
+  #tabs button .badge.warn { background:rgba(224,144,106,.16); color:#e0b06a; }
+  #tabs button.active .badge { background:rgba(88,201,185,.14); color:var(--accent); }
+  .tabpane { display:none; }
+  .tabpane.active { display:block; }
+  .tabpane > .card, .tabpane > .cols { margin-top:16px; }
+
   #drop { border:1.5px dashed var(--line); border-radius:var(--radius); padding:26px 20px;
           text-align:center; color:var(--muted); cursor:pointer; margin-top:8px;
           transition:border-color .15s, background .15s; }
@@ -98,6 +115,51 @@
   #reviewList .f-items .it b { color:var(--accent); }
   #reviewList .clean { color:var(--muted); font-size:13px; }
 
+  /* statements coverage */
+  .cols2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:800px) { .cols2 { grid-template-columns:1fr; } }
+  #stmtCard h4 { margin:12px 0 5px; font-size:12px; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:.07em; font-weight:500; }
+  #stmtGaps .gap { display:flex; gap:9px; align-items:flex-start; padding:8px 10px;
+                   border-radius:8px; margin-bottom:7px;
+                   background:rgba(224,144,106,.10); border:1px solid #5c4636; }
+  #stmtGaps .gap .ic { color:#e0b06a; font-size:15px; line-height:1.2; }
+  #stmtGaps .gap .gt { font-weight:600; font-size:13px; }
+  #stmtGaps .gap .gd { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  #stmtGaps .ok { color:var(--muted); font-size:13px; }
+  .pill { display:inline-block; padding:0 7px; border-radius:9px; font-size:11px;
+          white-space:nowrap; border:1px solid var(--line); }
+  .pill.yes { color:var(--accent); border-color:#2c5b54; background:rgba(88,201,185,.10); }
+  .pill.no  { color:#e0b06a; border-color:#5c4636; background:rgba(224,144,106,.12); }
+  #stmtLog td { font-size:12px; }
+
+  /* documents table */
+  #docsTable tbody tr:hover { background:var(--panel2); }
+  #docsTable td.ic { text-align:center; color:var(--muted); font-size:12px; }
+  #docsTable tr.miss { background:rgba(224,144,106,.07); }
+  #docsTable tr.miss:hover { background:rgba(224,144,106,.12); }
+  #docsTable tr.miss td.ic { color:#e0b06a; }
+  #docsTable tr.miss .dperiod { color:#e0b06a; font-weight:600; }
+  #docsTable .dperiod { font-weight:550; }
+  .kind { display:inline-block; padding:0 6px; border-radius:9px; font-size:10.5px;
+          letter-spacing:.03em; border:1px solid var(--line); color:var(--muted); }
+  .kind.card { color:#b183d6; border-color:#4a3a5c; }
+  .kind.bank { color:#6a9fe0; border-color:#2f4763; }
+
+  /* categories management */
+  #catsBody tr:hover { background:var(--panel2); }
+  #catsBody tr.sel { background:rgba(88,201,185,.10); }
+  #catsBody td.subs { color:var(--muted); font-size:11.5px; overflow:hidden;
+                      text-overflow:ellipsis; white-space:nowrap; max-width:0; }
+  #catsBody .cname { font-weight:550; }
+  #catsBody .zero { color:var(--muted); }
+  #mergeBar { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+              padding:9px 10px; margin-bottom:10px; border-radius:8px;
+              background:var(--panel2); border:1px solid var(--line); }
+  #mergeBar.armed { border-color:var(--accent); }
+  #mergeSel { font-size:12.5px; color:var(--muted); flex:1; min-width:140px; }
+  #mergeBar .combo > input { min-width:150px; }
+
   /* guided tagging panel */
   #guide { display:none; background:var(--panel2); border:1px solid var(--accent);
            border-radius:8px; padding:12px; margin-bottom:12px; }
@@ -120,6 +182,29 @@
   .combo-list .opt.create b { color:var(--accent); }
   .combo-list .none { padding:5px 9px; font-size:12.5px; color:var(--muted); }
 
+  /* drill-down dialog */
+  #drill { position:fixed; inset:0; z-index:50; background:rgba(6,10,13,.66);
+           display:flex; align-items:center; justify-content:center; padding:24px; }
+  #drill[hidden] { display:none; }
+  #drill .dlg { background:var(--panel); border:1px solid var(--line);
+                border-radius:var(--radius); width:min(880px,100%);
+                max-height:min(78vh,760px); display:flex; flex-direction:column;
+                box-shadow:0 18px 48px rgba(0,0,0,.5); }
+  #drill .dhead { display:flex; justify-content:space-between; align-items:flex-start;
+                  gap:12px; padding:14px 16px 10px; border-bottom:1px solid var(--line); }
+  #drill .dhead h3 { margin:0; font-size:15px; }
+  #drill .dsub { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  #drill .dstats { display:flex; gap:20px; flex-wrap:wrap; padding:10px 16px;
+                   border-bottom:1px solid var(--line); background:var(--panel2); }
+  #drill .dstats .k { color:var(--muted); font-size:10.5px; text-transform:uppercase;
+                      letter-spacing:.07em; }
+  #drill .dstats .v { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #drill .dbody { overflow:auto; padding:0 16px 14px; }
+  #drill .dbody thead th { position:sticky; top:0; background:var(--panel); z-index:1; }
+  #drill tbody tr:hover { background:var(--panel2); }
+  #drill td.dcat { color:var(--muted); font-size:11.5px; }
+  #drill .dnone { color:var(--muted); font-size:13px; padding:14px 0; }
+
   #toast { position:fixed; bottom:18px; right:18px; background:var(--panel2);
            border:1px solid var(--accent); border-radius:8px; padding:9px 14px;
            font-size:13px; opacity:0; transition:opacity .25s; pointer-events:none; }
@@ -130,6 +215,13 @@
   <h1>Spend<span>Flow</span></h1>
   <span class="sub">local &amp; private — SQLite-backed</span>
 </header>
+
+<div id="tabs">
+  <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="documents">Documents <span class="badge" id="tabDocs"></span></button>
+  <button data-tab="categorize">Categorize <span class="badge" id="tabCat"></span></button>
+  <button data-tab="rules">Rules <span class="badge" id="tabRules"></span></button>
+</div>
 
 <div class="wrap">
   <div id="drop">
@@ -149,6 +241,7 @@
     </div>
   </div>
 
+  <div class="tabpane active" id="pane-overview">
   <div id="stats">
     <div class="stat"><div class="k">Income</div><div class="v pos" id="sIn">–</div></div>
     <div class="stat"><div class="k">Expenses</div><div class="v neg" id="sOut">–</div></div>
@@ -160,16 +253,82 @@
     </div>
   </div>
 
+  <div id="chartHint" class="hint" style="display:none;margin:10px 0 -6px">
+    Click any category, subcategory or bar to list the transactions behind it.</div>
   <div id="chart"></div>
   <div id="trend"></div>
+  </div><!-- /pane-overview -->
 
+  <div class="tabpane" id="pane-documents">
+  <div class="card" id="stmtCard">
+    <h3>Imported documents <span id="stmtCount" style="color:var(--muted);font-weight:400"></span>
+      <span class="toggle" id="docFilter" style="float:right">
+        <button class="small active" data-f="all">All</button><button class="small" data-f="missing">Missing</button><button class="small" data-f="bank">Bank</button><button class="small" data-f="card">Card</button>
+      </span></h3>
+    <div class="hint">Every statement that should exist. Bank statements are tracked per
+      month; each credit-card bill paid from your account should have a matching itemized
+      statement. Missing rows are highlighted — import those files to close the gaps.</div>
+    <div id="stmtGaps"></div>
+    <table id="docsTable">
+      <thead><tr>
+        <th style="width:26px"></th>
+        <th>Period</th>
+        <th style="width:70px">Kind</th>
+        <th style="width:150px">Covers</th>
+        <th style="width:58px;text-align:right">Txns</th>
+        <th style="width:104px;text-align:right">Amount</th>
+        <th style="width:96px">Status</th>
+        <th>Source / action</th>
+      </tr></thead>
+      <tbody id="docsBody"></tbody>
+    </table>
+    <div id="docsEmpty" class="hint" style="display:none;margin:10px 0 0">No documents yet — drop a statement above.</div>
+    <details id="logDetails" style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:12.5px">Raw import log</summary>
+      <table style="margin-top:8px"><thead><tr><th>Imported</th><th>File</th><th style="width:52px">Kind</th>
+                        <th>Period</th><th style="width:52px;text-align:right">New</th>
+                        <th style="width:52px;text-align:right">Dup</th></tr></thead>
+        <tbody id="stmtLog"></tbody></table>
+    </details>
+  </div>
+
+  </div><!-- /pane-documents -->
+
+  <div class="tabpane" id="pane-categorize">
   <div class="card" id="reviewCard">
     <h3>Review <span id="reviewCount" style="color:var(--muted);font-weight:400"></span></h3>
-    <div class="hint">Category hygiene checks — duplicate names, cross-level reuse, singletons, and amount outliers.</div>
+    <div class="hint">Category hygiene checks — near-duplicate names, cross-level reuse, singletons, and amount outliers.</div>
     <div id="reviewList"></div>
   </div>
 
-  <div class="cols">
+  <div class="card" id="catsCard">
+    <h3>Categories <span id="catsCount" style="color:var(--muted);font-weight:400"></span>
+      <button class="small" id="toggleCats" style="float:right">manage</button></h3>
+    <div class="hint">Select two or more categories to merge them into one — use
+      <b>as subcategory</b> to keep the old names as subs instead of discarding them.
+      Rules are rewritten too, so imports stop recreating the old names.</div>
+    <div id="catsWrap" style="display:none">
+      <div id="mergeBar">
+        <span id="mergeSel">Nothing selected</span>
+        <div class="combo"><input type="text" id="mergeTarget" placeholder="Merge into…" autocomplete="off">
+          <div class="combo-list" id="mergeTargetList"></div></div>
+        <label class="inline"><input type="checkbox" id="mergeAsSub"> as subcategory</label>
+        <button class="primary small" id="mergeGo">Merge</button>
+        <button class="small" id="mergeClear">Clear</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:26px"></th><th>Category</th>
+                   <th style="width:44px;text-align:right">#</th>
+                   <th style="width:104px;text-align:right">Spent</th>
+                   <th style="width:104px;text-align:right">Income</th>
+                   <th style="width:52px;text-align:right">Rules</th>
+                   <th>Subcategories</th>
+                   <th style="width:62px"></th></tr></thead>
+        <tbody id="catsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
     <div class="card" id="uncatCard">
       <h3>Guided tagging <span id="uncatPct" style="color:var(--muted);font-weight:400"></span>
         <span class="toggle" id="kindToggle" style="float:right">
@@ -198,19 +357,43 @@
         <tbody id="uncatBody"></tbody>
       </table>
     </div>
+  </div><!-- /pane-categorize -->
+
+  <div class="tabpane" id="pane-rules">
     <div class="card" id="rulesCard">
       <h3>Rules <span id="rulesCount" style="color:var(--muted);font-weight:400"></span>
         <button class="small" id="toggleRaw" style="float:right">raw edit</button></h3>
-      <div class="hint">Rules are built by tagging above. Expand raw edit only if you need to hand-tweak.</div>
+      <div class="hint">Rules are built by tagging under <b>Categorize</b>. Expand raw edit only if you need to hand-tweak.</div>
       <div id="rawWrap" style="display:none">
-        <div class="hint mono">regex ; Category ; Subcategory(optional) — one per line, # for comments · stored in data/rules.json</div>
+        <div class="hint mono">regex ; category ; subcategory(optional) — one per line, # for comments · stored in data/rules.json</div>
         <textarea id="rules" class="mono" spellcheck="false"></textarea>
         <div class="actions"><button class="primary" id="saveRules">Save &amp; re-apply</button></div>
       </div>
       <div id="rulesList" class="mono" style="font-size:12.5px"></div>
     </div>
+  </div><!-- /pane-rules -->
+</div>
+<div id="drill" hidden>
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="drillTitle">
+    <div class="dhead">
+      <div>
+        <h3 id="drillTitle">Transactions</h3>
+        <div class="dsub" id="drillSub"></div>
+      </div>
+      <button class="small" id="drillClose" aria-label="Close">✕</button>
+    </div>
+    <div class="dstats" id="drillStats"></div>
+    <div class="dbody">
+      <table>
+        <thead><tr><th style="width:92px">Date</th><th>Description</th>
+                   <th style="width:150px">Category</th>
+                   <th style="width:112px;text-align:right">Amount</th></tr></thead>
+        <tbody id="drillBody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
+
 <div id="toast"></div>
 
 <script>
@@ -341,6 +524,8 @@ async function refresh() {
   loadRules();
   loadUncategorized();
   loadReview();
+  loadCategories();
+  loadStatements();
 }
 
 function render() {
@@ -355,8 +540,9 @@ function render() {
   const saved = totalIn - totalOut;
 
   $('stats').style.display = 'flex';
-  ['uncatCard', 'rulesCard', 'reviewCard'].forEach(id => $(id).style.display = 'block');
-  ['chart', 'trend'].forEach(id => $(id).style.display = 'block');
+  ['uncatCard', 'rulesCard', 'reviewCard', 'catsCard', 'stmtCard']
+    .forEach(id => $(id).style.display = 'block');
+  ['chart', 'trend', 'chartHint'].forEach(id => $(id).style.display = 'block');
   $('sIn').textContent = fmt(totalIn);
   $('sOut').textContent = fmt(totalOut);
   $('sSave').textContent = fmt(saved);
@@ -377,12 +563,15 @@ const colorFor = cat => {
 
 function renderSankey(inc, exp, saved) {
   const nodes = [], idx = new Map();
+  // Each node carries the filter that selects its transactions, so a click maps
+  // straight to a drill-down without parsing display labels back apart.
+  const meta = [];
   // Nodes are keyed by a role-prefixed INTERNAL id, not their display label, so a
   // name reused across levels (e.g. 'household' as both a category and a sub, or a
   // 'budget' category vs the 'Budget' hub) can never resolve to the same node and
   // form a backward loop. `label` is what the user sees; `key` keeps them distinct.
-  const node = (key, label, color) => {
-    if (!idx.has(key)) { idx.set(key, nodes.length); nodes.push({label, color}); }
+  const node = (key, label, color, filter = null) => {
+    if (!idx.has(key)) { idx.set(key, nodes.length); nodes.push({label, color}); meta.push(filter); }
     return idx.get(key);
   };
   const L = {source: [], target: [], value: [], color: []};
@@ -398,16 +587,20 @@ function renderSankey(inc, exp, saved) {
   // multiple streams under one category (e.g. Income · Salary, Income · Rent)
   // show as separate source bands instead of collapsing into one node.
   for (const [cat, v] of sumBy(inc, t => t.cat === 'Uncategorized' ? 'Other income' : t.cat)) {
-    const cn = node('inccat:' + cat, cat, INC);
+    const real = cat === 'Other income' ? 'Uncategorized' : cat;
+    const cn = node('inccat:' + cat, cat, INC, {kind: 'income', cat: real, label: cat});
     link(cn, hub, v, INC);
     for (const [sub, sv] of sumBy(inc.filter(t => t.cat === cat && t.sub), t => t.sub))
-      link(node('incsub:' + cat + '\0' + sub, cat + ' · ' + sub, INC), cn, sv, INC);
+      link(node('incsub:' + cat + '\0' + sub, cat + ' · ' + sub, INC,
+                {kind: 'income', cat: real, sub, label: cat + ' · ' + sub}), cn, sv, INC);
   }
   for (const [cat, v] of sumBy(exp, t => t.cat)) {
-    const c = colorFor(cat), cn = node('expcat:' + cat, cat, c);
+    const c = colorFor(cat);
+    const cn = node('expcat:' + cat, cat, c, {kind: 'expense', cat, label: cat});
     link(hub, cn, v, c);
     for (const [sub, sv] of sumBy(exp.filter(t => t.cat === cat && t.sub), t => t.sub))
-      link(cn, node('expsub:' + cat + '\0' + sub, cat + ' · ' + sub, c), sv, c);
+      link(cn, node('expsub:' + cat + '\0' + sub, cat + ' · ' + sub, c,
+                    {kind: 'expense', cat, sub, label: cat + ' · ' + sub}), sv, c);
   }
   if (saved > 0) link(hub, node('\0saved', 'Saved', '#58c9b9'), saved, '#58c9b9');
 
@@ -424,11 +617,32 @@ function renderSankey(inc, exp, saved) {
     type: 'sankey', orientation: 'h',
     node: {label: nodes.map(n => n.label), color: nodes.map(n => n.color),
            pad: 14, thickness: 14, line: {width: 0},
-           hovertemplate: '%{label}: %{value:,.2f}<extra></extra>'},
-    link: {...L, hovertemplate: '%{source.label} → %{target.label}: %{value:,.2f}<extra></extra>'}
+           customdata: nodes.map((_, i) => i),
+           hovertemplate: '%{label}: %{value:,.2f}<extra>click to list</extra>'},
+    link: {...L, hovertemplate: '%{source.label} → %{target.label}: %{value:,.2f}<extra>click to list</extra>'}
   }], {paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
        font: {color: '#dde5ec', size: 12.5}, margin: {t: 20, l: 10, r: 10, b: 20}, height},
      {displayModeBar: false, responsive: true});
+
+  // Click a node (or either end of a link) to list the transactions behind it.
+  const el = $('chart');
+  el.removeAllListeners && el.removeAllListeners('plotly_click');
+  el.on('plotly_click', ev => {
+    const p = ev.points && ev.points[0];
+    if (!p) return;
+    // A LINK point carries source/target node objects; a NODE point does not.
+    // Test that first: on a link, p.index is the link's own index, which would
+    // otherwise be misread as a node index and open an unrelated category.
+    let f = null;
+    if (p.source && p.target) {
+      // the more specific end: target for expenses (cat → sub), source for income
+      const s = meta[p.source.index], t = meta[p.target.index];
+      f = (t && t.sub) ? t : (s && s.sub) ? s : (t || s);
+    } else if (p.index !== undefined) {
+      f = meta[p.index];
+    }
+    if (f) showDrill(f);
+  });
 }
 
 async function renderTrend() {
@@ -446,6 +660,16 @@ async function renderTrend() {
     font: {color: '#dde5ec', size: 12}, margin: {t: 40, l: 55, r: 10, b: 40}, height: 320,
     legend: {orientation: 'h', y: -0.18}, xaxis: {gridcolor: '#26313b'}, yaxis: {gridcolor: '#26313b'}
   }, {displayModeBar: false, responsive: true});
+
+  // Click a bar segment to list that category's transactions for that month.
+  const el = $('trend');
+  el.removeAllListeners && el.removeAllListeners('plotly_click');
+  el.on('plotly_click', ev => {
+    const p = ev.points && ev.points[0];
+    if (!p) return;
+    showDrill({kind: 'expense', cat: p.data.name, month: p.x,
+               label: `${p.data.name} · ${p.x}`});
+  });
 }
 
 // ---------- searchable combo box ----------
@@ -527,6 +751,10 @@ async function loadUncategorized() {
     : -txns.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
   const unSum = groups.reduce((s, g) => s + g.total, 0);
   $('uncatPct').textContent = side ? `· ${(100 * unSum / side).toFixed(1)}% of ${uncatKind}` : '';
+  // tab badge: how many merchant groups still need a category
+  const tb = $('tabCat');
+  tb.textContent = groups.length || '';
+  tb.className = 'badge' + (groups.length ? ' warn' : '');
   const esc = s => String(s).replace(/</g, '&lt;');
   $('uncatBody').innerHTML = groups.map((g, i) => {
     const s = g.suggest || {};
@@ -591,6 +819,7 @@ async function loadRules() {
   const rules = await api('/api/rules');
   $('rules').value = rules.map(r => [r.match, r.cat, r.sub].filter(Boolean).join(' ; ')).join('\n');
   $('rulesCount').textContent = `· ${rules.length} rule${rules.length === 1 ? '' : 's'}`;
+  $('tabRules').textContent = rules.length || '';
   const esc = s => String(s).replace(/</g, '&lt;');
   $('rulesList').innerHTML = rules.length
     ? rules.map(r => `<div class="rrow"><span class="rx">${esc(r.match)}</span>
@@ -616,6 +845,251 @@ $('saveRules').onclick = async () => {
     refresh();
   } catch (err) { alert(err.message); }
 };
+
+// ---------- Chart drill-down: the transactions behind a segment ----------
+// Filters the same in-memory `txns` the charts were built from, applying the
+// identical exclusions (reconciled lump-sums, selected month) so the listed total
+// always reconciles with the value shown on the chart.
+function drillMatch(f) {
+  const month = f.month || $('monthSel').value;
+  return txns.filter(t => {
+    if (t.reconciled) return false;
+    if (month && !(t.date || '').startsWith(month)) return false;
+    if (f.kind === 'income' && !(t.amount > 0)) return false;
+    if (f.kind === 'expense' && !(t.amount < 0)) return false;
+    if (f.cat !== undefined && t.cat !== f.cat) return false;
+    if (f.sub !== undefined && t.sub !== f.sub) return false;
+    return true;
+  }).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+}
+
+function showDrill(f) {
+  const rows = drillMatch(f);
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const month = f.month || $('monthSel').value;
+  const total = rows.reduce((s, t) => s + Math.abs(t.amount), 0);
+
+  $('drillTitle').textContent = f.label || 'Transactions';
+  const nSubs = f.sub ? 0 : new Set(rows.filter(t => t.sub).map(t => t.sub)).size;
+  $('drillSub').textContent = [
+    f.kind === 'income' ? 'income' : 'spending',
+    month ? `in ${month}` : 'across all months',
+    nSubs > 1 ? `across ${nSubs} subcategories` : '',
+  ].filter(Boolean).join(' · ');
+
+  $('drillStats').innerHTML = `
+    <div><div class="k">Transactions</div><div class="v">${rows.length}</div></div>
+    <div><div class="k">Total</div><div class="v ${f.kind === 'income' ? 'pos' : 'neg'}">${fmt(total)}</div></div>
+    <div><div class="k">Average</div><div class="v">${rows.length ? fmt(total / rows.length) : '–'}</div></div>
+    <div><div class="k">Largest</div><div class="v">${rows.length ? fmt(Math.abs(rows[0].amount)) : '–'}</div></div>`;
+
+  $('drillBody').innerHTML = rows.length ? rows.map(t => `
+    <tr>
+      <td class="mono">${esc(t.date || '—')}</td>
+      <td>${esc(t.desc)}</td>
+      <td class="dcat">${esc(t.cat)}${t.sub ? ' · ' + esc(t.sub) : ''}</td>
+      <td class="num ${t.amount > 0 ? 'pos' : 'neg'}">${fmt(Math.abs(t.amount))}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" class="dnone">No transactions match this segment.</td></tr>';
+
+  $('drill').hidden = false;
+  $('drillClose').focus();
+}
+
+function hideDrill() { $('drill').hidden = true; }
+$('drillClose').onclick = hideDrill;
+$('drill').onclick = e => { if (e.target === $('drill')) hideDrill(); };  // backdrop
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('drill').hidden) hideDrill();
+});
+
+// ---------- Tabs ----------
+function showTab(name) {
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tabpane').forEach(p =>
+    p.classList.toggle('active', p.id === 'pane-' + name));
+  // Plotly sizes to a hidden container as 0-width; re-render once visible.
+  if (name === 'overview' && txns.length) render(), renderTrend();
+  try { localStorage.setItem('sf.tab', name); } catch (e) {}
+}
+document.querySelectorAll('#tabs button').forEach(b =>
+  b.onclick = () => showTab(b.dataset.tab));
+
+// ---------- Documents: one row per statement, present or missing ----------
+let docs = [], docFilter = 'all';
+
+async function loadStatements() {
+  const s = await api('/api/statements');
+  const esc = t => String(t).replace(/</g, '&lt;');
+  const miss = s.missing;
+  const nGaps = miss.cards.length + miss.months.length;
+  docs = s.docs || [];
+
+  $('stmtCount').textContent = docs.length
+    ? `· ${docs.length} document${docs.length === 1 ? '' : 's'}`
+      + (nGaps ? ` · ${nGaps} missing` : '')
+    : '';
+  const badge = $('tabDocs');
+  badge.textContent = nGaps || '';
+  badge.className = 'badge' + (nGaps ? ' warn' : '');
+
+  const gaps = [];
+  if (miss.cards.length) gaps.push(`
+    <div class="gap"><div class="ic">⚠</div><div>
+      <div class="gt">${miss.cards.length} credit-card statement${miss.cards.length === 1 ? '' : 's'} missing
+        — ${fmt(miss.card_total)}</div>
+      <div class="gd">These bills were paid from your account but never itemized, so the
+        spend shows as a lump sum: ${miss.cards.map(c => esc(c.date)).join(', ')}.
+        Import the matching Viseca PDFs to break them down.</div>
+    </div></div>`);
+  if (miss.months.length) gaps.push(`
+    <div class="gap"><div class="ic">⚠</div><div>
+      <div class="gt">${miss.months.length} month${miss.months.length === 1 ? '' : 's'} with no bank transactions</div>
+      <div class="gd">${miss.months.map(esc).join(', ')} — inside your covered range but
+        empty, so the account statement was probably never imported.</div>
+    </div></div>`);
+  $('stmtGaps').innerHTML = gaps.length ? gaps.join('')
+    : (docs.length ? '<div class="ok">✓ Every credit-card bill is itemized and no month is empty.</div>' : '');
+
+  renderDocs();
+
+  $('stmtLog').innerHTML = s.imports.length ? s.imports.map(i => `
+    <tr><td class="mono">${esc((i.imported_at || '').replace('T', ' ').slice(0, 16))}</td>
+        <td>${esc(i.filename || '—')}</td>
+        <td>${esc(i.kind)}</td>
+        <td class="mono">${i.period_from ? esc(i.period_from + ' → ' + i.period_to) : '—'}</td>
+        <td class="num">${i.n_txns}</td><td class="num">${i.n_dupes || '–'}</td></tr>`).join('')
+    : '<tr><td colspan="6" style="color:var(--muted)">Nothing logged yet — entries are'
+      + ' recorded from your next import onward.</td></tr>';
+}
+
+function renderDocs() {
+  const esc = t => String(t).replace(/</g, '&lt;');
+  const list = docs.filter(d =>
+    docFilter === 'all' ? true :
+    docFilter === 'missing' ? d.status === 'missing' : d.kind === docFilter);
+  const MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const pretty = d => {
+    if (d.kind === 'bank') {
+      const [y, m] = d.period.split('-');
+      return `${MONTH[+m - 1]} ${y}`;
+    }
+    return d.period;
+  };
+  // 'Covers' is the date span; for a card bill that's the single billing date, which
+  // the Period column already shows — so leave it blank rather than repeat it.
+  const covers = d => d.kind === 'bank' && d.from ? `${d.from} → ${d.to}` : '';
+  const src = d => d.source === 'logged'
+    ? `<span title="${esc(d.filename || '')}">${esc(d.filename || 'imported')}</span>`
+    : d.source === 'inferred'
+      ? '<span style="color:var(--muted)" title="Imported before the log existed — reconstructed from the transactions">reconstructed</span>'
+      : '<span style="color:var(--muted)">—</span>';
+
+  $('docsBody').innerHTML = list.map(d => `
+    <tr class="${d.status === 'missing' ? 'miss' : ''}">
+      <td class="ic">${d.status === 'missing' ? '⚠' : (d.kind === 'card' ? '▤' : '▦')}</td>
+      <td class="dperiod">${esc(pretty(d))}</td>
+      <td><span class="kind ${d.kind}">${d.kind}</span></td>
+      <td class="mono" style="font-size:11.5px;color:var(--muted)">${esc(covers(d))}</td>
+      <td class="num">${d.n_txns || '–'}</td>
+      <td class="num">${d.amount ? fmt(d.amount) : '–'}</td>
+      <td><span class="pill ${d.status === 'missing' ? 'no' : 'yes'}">${d.status}</span></td>
+      <td style="font-size:11.5px">${d.status === 'missing'
+        ? `<span style="color:var(--muted)">${d.kind === 'card'
+             ? 'import the Viseca PDF for this bill' : 'import this month’s statement'}</span>`
+        : src(d)}</td>
+    </tr>`).join('');
+  $('docsEmpty').style.display = list.length ? 'none' : 'block';
+  $('docsEmpty').textContent = docs.length
+    ? 'No documents match this filter.'
+    : 'No documents yet — drop a statement above.';
+}
+
+$('docFilter').querySelectorAll('button').forEach(b => b.onclick = () => {
+  docFilter = b.dataset.f;
+  $('docFilter').querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+  renderDocs();
+});
+
+// ---------- Categories: usage overview + bulk merge ----------
+let catRows = [], catSel = new Set();
+
+async function loadCategories() {
+  catRows = await api('/api/categories/overview');
+  const real = catRows.filter(c => c.cat !== 'Uncategorized');
+  $('catsCount').textContent = real.length ? `· ${real.length}` : '';
+  if ($('catsWrap').style.display === 'none') return;   // collapsed: skip the render
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const money = v => v ? fmt(v) : '<span class="zero">–</span>';
+  $('catsBody').innerHTML = catRows.map(c => `
+    <tr data-cat="${esc(c.cat)}" class="${catSel.has(c.cat) ? 'sel' : ''}">
+      <td><input type="checkbox" data-pick="${esc(c.cat)}" ${catSel.has(c.cat) ? 'checked' : ''}
+                 ${c.cat === 'Uncategorized' ? 'disabled' : ''}></td>
+      <td class="cname">${esc(c.cat)}</td>
+      <td class="num">${c.n || '<span class="zero">0</span>'}</td>
+      <td class="num">${money(c.spent)}</td>
+      <td class="num">${money(c.income)}</td>
+      <td class="num">${c.rules || '<span class="zero">–</span>'}</td>
+      <td class="subs" title="${esc(c.subs.join(', '))}">${esc(c.subs.join(' · ')) || ''}</td>
+      <td class="tagcell">${c.cat === 'Uncategorized' ? '' :
+        `<button class="small" data-ren="${esc(c.cat)}">rename</button>`}</td>
+    </tr>`).join('');
+  $('catsBody').querySelectorAll('input[data-pick]').forEach(cb =>
+    cb.onchange = () => { cb.checked ? catSel.add(cb.dataset.pick) : catSel.delete(cb.dataset.pick);
+                          loadCategories(); });
+  $('catsBody').querySelectorAll('button[data-ren]').forEach(b =>
+    b.onclick = () => renameCat(b.dataset.ren));
+  updateMergeBar();
+}
+
+function updateMergeBar() {
+  const n = catSel.size;
+  $('mergeSel').textContent = n
+    ? `${n} selected: ${[...catSel].join(', ')}`
+    : 'Nothing selected';
+  $('mergeBar').classList.toggle('armed', n > 0);
+}
+
+async function renameCat(cat) {
+  const next = prompt(`Rename category '${cat}' to:`, cat);
+  if (!next || next.trim() === cat) return;
+  try {
+    await api('/api/category/rename', {method: 'POST',
+      body: JSON.stringify({level: 'cat', old: cat, new: next.trim()})});
+    toast(`Renamed '${cat}' → '${next.trim()}'`);
+    catSel.delete(cat);
+    refresh();
+  } catch (err) { alert(err.message); }
+}
+
+$('toggleCats').onclick = () => {
+  const w = $('catsWrap'), open = w.style.display === 'none';
+  w.style.display = open ? 'block' : 'none';
+  $('toggleCats').textContent = open ? 'done' : 'manage';
+  if (open) loadCategories();
+};
+$('mergeClear').onclick = () => { catSel.clear(); loadCategories(); };
+$('mergeGo').onclick = async () => {
+  const target = $('mergeTarget').value.trim();
+  if (!catSel.size) return alert('Select the categories to merge first.');
+  if (!target) return alert('Type or pick the category to merge into.');
+  const sources = [...catSel].filter(c => c !== target);
+  if (!sources.length) return alert('Pick a target different from the selection.');
+  const asSub = $('mergeAsSub').checked;
+  if (!confirm(`Merge ${sources.map(s => `'${s}'`).join(', ')} into '${target}'`
+             + `${asSub ? ' (keeping the old names as subcategories)' : ''}?`)) return;
+  try {
+    const res = await api('/api/category/merge', {method: 'POST',
+      body: JSON.stringify({sources, target, as_sub: asSub})});
+    toast(`Merged into '${target}' — ${res.changed} transactions updated`);
+    catSel.clear();
+    $('mergeTarget').value = '';
+    refresh();
+  } catch (err) { alert(err.message); }
+};
+makeCombo($('mergeTarget'), $('mergeTargetList'),
+          () => catRows.map(c => c.cat).filter(c => c !== 'Uncategorized'));
 
 // ---------- Review card: category anomaly findings ----------
 async function loadReview() {
@@ -655,6 +1129,12 @@ async function applyFix(f) {
     refresh();
   } catch (err) { alert(err.message); }
 }
+
+// restore the tab you were last on
+try {
+  const saved = localStorage.getItem('sf.tab');
+  if (saved && $('pane-' + saved)) showTab(saved);
+} catch (e) {}
 
 refresh().catch(() => {});  // empty DB on first run is fine
 </script>
