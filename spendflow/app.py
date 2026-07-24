@@ -1,5 +1,7 @@
 """SpendFlow backend. Localhost single-user; state = one SQLite file + rules.json."""
 import json
+import shutil
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
@@ -13,8 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .core import (categorize, compile_rules, detect_anomalies, detect_recurring,
-                   merchant_token, norm_name, parse_camt, parse_raiffeisen,
-                   parse_viseca, suggest_rule, txn_hash)
+                   merchant_regex, merchant_token, norm_name, parse_camt,
+                   parse_raiffeisen, parse_viseca, suggest_rule, txn_hash)
 
 DATA_DIR = Path(os.environ.get("SPENDFLOW_DATA", "data"))
 DB_PATH = DATA_DIR / "spendflow.db"
@@ -159,6 +161,9 @@ class RecurOverride(BaseModel):
     merchant: str              # the detected merchant token this override applies to
     label: str | None = None   # friendly display name ('Rent'); blank clears
     ignore: bool = False       # True = not actually recurring, hide from the card
+    internal: bool = False     # True = transfer to my OWN account (set aside, not
+                               # spending) — e.g. a tax-provision savings account.
+                               # A transfer to someone else's account stays external.
 
 
 class Merge(BaseModel):
@@ -312,14 +317,22 @@ def uncategorized(kind: str = "expense"):
 
 @app.get("/api/stats/monthly")
 def stats_monthly():
-    """Per-month, per-category sums: long-term trends straight from SQL."""
+    """Per-month, per-category sums: long-term trends straight from SQL.
+
+    Transfers to the user's OWN accounts (internal, from recurring.json) are
+    reported under the synthetic category 'set aside' instead of their real one,
+    so trend and comparison views show consumption, not money moved to oneself."""
+    internal = _internal_merchants()
+    marks = ",".join("?" * len(internal))
+    cat_expr = (f"CASE WHEN merchant IN ({marks}) THEN 'set aside' ELSE cat END"
+                if internal else "cat")
     with db() as con:
-        rows = con.execute("""
-            SELECT strftime('%Y-%m', date) month, cat,
+        rows = con.execute(f"""
+            SELECT strftime('%Y-%m', date) month, {cat_expr} cat,
                    SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) spent,
                    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) received
             FROM txn WHERE date IS NOT NULL AND reconciled=0
-            GROUP BY month, cat ORDER BY month""").fetchall()
+            GROUP BY month, {cat_expr} ORDER BY month""", internal * 2).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -512,7 +525,13 @@ def recurring():
         o = ov.get(r["merchant"], {})
         r["label"] = o.get("label")
         r["ignored"] = bool(o.get("ignore"))
+        r["internal"] = bool(o.get("internal"))
     return rows
+
+
+def _internal_merchants() -> list[str]:
+    """Merchants flagged as transfers to the user's own accounts."""
+    return [m for m, o in _recur_overrides().items() if o.get("internal")]
 
 
 @app.post("/api/recurring/override")
@@ -525,6 +544,8 @@ def recur_override(o: RecurOverride):
         entry["label"] = o.label.strip()
     if o.ignore:
         entry["ignore"] = True
+    if o.internal:
+        entry["internal"] = True
     if entry:
         ov[o.merchant] = entry
     else:
@@ -714,6 +735,144 @@ def merge_categories(m: Merge):
         RULES_PATH.write_text(json.dumps(rules, indent=1, ensure_ascii=False))
         apply_rules(con)
     return {"ok": True, "changed": changed, "merged": sources, "target": target}
+
+
+# ---------- assistant (local Claude CLI; opt-in, no API key) ----------
+# Uses the machine's `claude` login via headless mode, so nothing works unless
+# the user has the CLI installed and authenticated — which doubles as consent.
+# Payloads are deliberately minimal: merchant names / aggregates, never the ledger.
+
+def _run_claude(prompt: str, timeout: int = 180) -> str:
+    """Run `claude -p` headless and return its text result."""
+    exe = shutil.which("claude")
+    if not exe:
+        raise HTTPException(503, "Claude CLI not found on this machine")
+    try:
+        p = subprocess.run([exe, "-p", prompt, "--output-format", "json"],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Assistant timed out")
+    if p.returncode != 0:
+        raise HTTPException(502, f"Claude CLI failed: {(p.stderr or p.stdout)[:300]}")
+    try:
+        env = json.loads(p.stdout)
+    except json.JSONDecodeError:
+        return p.stdout                      # plain-text fallback
+    if env.get("is_error"):
+        raise HTTPException(502, f"Assistant error: {str(env.get('result'))[:300]}")
+    return env.get("result") or ""
+
+
+def _extract_json(text: str):
+    """The first JSON array/object in a model reply (tolerates prose/fences)."""
+    m = re.search(r"\[.*\]|\{.*\}", text, re.S)
+    if not m:
+        raise HTTPException(502, "Assistant returned no parseable JSON")
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, f"Assistant returned invalid JSON: {e}")
+
+
+@app.get("/api/ai/status")
+def ai_status():
+    return {"available": shutil.which("claude") is not None}
+
+
+@app.post("/api/ai/categorize")
+def ai_categorize():
+    """Ask the assistant to categorize the uncategorized merchant groups.
+    Sends: merchant token, one sample description, count, total — plus the
+    existing category vocabulary so suggestions reuse it instead of inventing.
+    Returns proposals with a ready-to-save rule regex; nothing is applied here —
+    the user accepts each one explicitly (which POSTs /api/assign as usual)."""
+    with db() as con:
+        groups = con.execute("""
+            SELECT merchant, MIN(desc) AS sample, COUNT(*) AS n,
+                   ROUND(SUM(ABS(amount)), 2) AS total
+            FROM txn WHERE cat = 'Uncategorized' AND merchant IS NOT NULL
+            GROUP BY merchant ORDER BY SUM(ABS(amount)) DESC LIMIT 25""").fetchall()
+        cats: dict[str, set] = {}
+        for r in con.execute("SELECT DISTINCT cat, sub FROM txn "
+                             "WHERE cat != 'Uncategorized'"):
+            cats.setdefault(r["cat"], set())
+            if r["sub"]:
+                cats[r["cat"]].add(r["sub"])
+    if not groups:
+        return {"proposals": []}
+
+    vocab = "; ".join(f"{c}" + (f" (subs: {', '.join(sorted(s))})" if s else "")
+                      for c, s in sorted(cats.items()))
+    lines = "\n".join(f"- {g['merchant']} | e.g. {g['sample'][:90]} | "
+                      f"{g['n']} txns, {g['total']} CHF" for g in groups)
+    prompt = f"""You are categorizing Swiss bank-statement merchants for a personal finance app.
+
+Existing categories (REUSE these; lowercase; only invent a new one when nothing fits):
+{vocab}
+
+For each merchant below, pick the best category and optional subcategory.
+Reply with ONLY a JSON array, no other text:
+[{{"merchant": "<exactly as given>", "cat": "...", "sub": "..." or null}}]
+
+Merchants:
+{lines}"""
+    result = _extract_json(_run_claude(prompt))
+    if not isinstance(result, list):
+        raise HTTPException(502, "Assistant reply was not a list")
+
+    by_merchant = {g["merchant"]: g for g in groups}
+    proposals = []
+    for item in result:
+        g = by_merchant.get(item.get("merchant"))
+        if not g or not item.get("cat"):
+            continue                        # hallucinated merchant: drop silently
+        proposals.append({
+            "merchant": g["merchant"], "n": g["n"], "total": g["total"],
+            "cat": norm_name(item["cat"]) or "Uncategorized",
+            "sub": norm_name(item.get("sub")),
+            "match": merchant_regex(g["sample"]),
+        })
+    return {"proposals": proposals}
+
+
+@app.post("/api/ai/insights")
+def ai_insights():
+    """Ask the assistant for savings observations over aggregates only:
+    per-month income/spend, per-category totals, recurring commitments, budgets."""
+    with db() as con:
+        monthly = [dict(r) for r in con.execute("""
+            SELECT substr(date,1,7) AS month,
+                   ROUND(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END)) AS income,
+                   ROUND(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END)) AS spent
+            FROM txn WHERE reconciled=0 AND date IS NOT NULL
+            GROUP BY month ORDER BY month""")]
+        bycat = [dict(r) for r in con.execute("""
+            SELECT cat, ROUND(SUM(-amount)) AS total, COUNT(*) AS n
+            FROM txn WHERE reconciled=0 AND amount<0
+            GROUP BY cat ORDER BY total DESC""")]
+        txns = [dict(r) for r in con.execute(
+            "SELECT merchant, date, amount FROM txn WHERE reconciled=0")]
+    ov = _recur_overrides()
+    rec = [{**{k: r[k] for k in ("merchant", "monthly", "n_months", "status", "change")},
+            "internal": bool(ov.get(r["merchant"], {}).get("internal")),
+            "label": ov.get(r["merchant"], {}).get("label")}
+           for r in detect_recurring(txns)]
+    budgets = json.loads(BUDGETS_PATH.read_text()) if BUDGETS_PATH.exists() else {}
+
+    prompt = f"""You are a pragmatic personal-finance analyst. Currency: CHF. Data is aggregated
+(no individual transactions). Give concise, concrete observations and savings
+suggestions — numbers over platitudes, no generic advice like "make a budget".
+Recurring entries marked "internal": true are transfers to the user's OWN
+accounts (money set aside, e.g. provisioning for tax bills) — treat them as
+set-aside, not consumption, and don't suggest cutting them. Labels may carry
+#tags explaining purpose. Format: short markdown sections with bullet points.
+Max ~300 words.
+
+Monthly income/spend: {json.dumps(monthly)}
+Spending by category (whole period): {json.dumps(bycat)}
+Recurring commitments: {json.dumps(rec)}
+Budgets set: {json.dumps(budgets)}"""
+    return {"text": _run_claude(prompt)}
 
 
 # ---------- frontend ----------

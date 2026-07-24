@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -420,6 +422,34 @@ def test_recurring_overrides_label_and_ignore(client):
     assert (r3["label"], r3["ignored"]) == (None, False)
 
 
+def test_internal_transfer_reported_as_set_aside(client):
+    # a standing order to one's own savings account, flagged internal
+    monthly = [{"date": f"2026-0{m}-05", "desc": "Übertrag auf Sparkonto CH11 2222",
+                "amount": -1000.0} for m in range(1, 5)]
+    spend = [{"date": f"2026-0{m}-10", "desc": "MIGROS ZUERICH", "amount": -50.0}
+             for m in range(1, 5)]
+    client.post("/api/import/txns", json=monthly + spend)
+    merchant = next(t["merchant"] for t in client.get("/api/txns").json()
+                    if "Sparkonto" in t["desc"])
+    client.post("/api/recurring/override",
+                json={"merchant": merchant, "internal": True})
+
+    # recurring row carries the flag
+    r = next(x for x in client.get("/api/recurring").json() if x["merchant"] == merchant)
+    assert r["internal"] is True
+
+    # monthly stats reroute it to the synthetic 'set aside' category
+    stats = client.get("/api/stats/monthly").json()
+    jan = {s["cat"]: s["spent"] for s in stats if s["month"] == "2026-01"}
+    assert jan.get("set aside") == 1000.0
+    assert "Uncategorized" in jan and jan["Uncategorized"] == 50.0  # real spend intact
+
+    # clearing the flag restores normal reporting
+    client.post("/api/recurring/override", json={"merchant": merchant})
+    stats2 = client.get("/api/stats/monthly").json()
+    assert not any(s["cat"] == "set aside" for s in stats2)
+
+
 def test_budgets_roundtrip_and_normalization(client):
     assert client.get("/api/budgets").json() == {}
     r = client.put("/api/budgets", json={"Groceries": 600, "leisure": 250.5,
@@ -430,6 +460,58 @@ def test_budgets_roundtrip_and_normalization(client):
     # replacing the map removes absent keys
     client.put("/api/budgets", json={"groceries": 500})
     assert client.get("/api/budgets").json() == {"groceries": 500.0}
+
+
+# ---------- assistant (CLI mocked) ----------
+def test_ai_status_reflects_cli_presence(client, monkeypatch):
+    from spendflow import app as app_mod
+    monkeypatch.setattr(app_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    assert client.get("/api/ai/status").json() == {"available": True}
+    monkeypatch.setattr(app_mod.shutil, "which", lambda _: None)
+    assert client.get("/api/ai/status").json() == {"available": False}
+
+
+def test_ai_categorize_normalizes_and_builds_rules(client, monkeypatch):
+    from spendflow import app as app_mod
+    client.post("/api/import/txns", json=TXNS)   # MIGROS + SBB uncategorized
+    monkeypatch.setattr(app_mod, "_run_claude", lambda p, timeout=180: json.dumps([
+        {"merchant": "MIGROS ZUERICH", "cat": "Groceries", "sub": "Food"},
+        {"merchant": "SBB EasyRide", "cat": "transport", "sub": None},
+        {"merchant": "Hallucinated Corp", "cat": "junk", "sub": None},
+    ]))
+    props = client.post("/api/ai/categorize").json()["proposals"]
+    by = {p["merchant"]: p for p in props}
+    assert "Hallucinated Corp" not in by            # unknown merchant dropped
+    assert (by["MIGROS ZUERICH"]["cat"], by["MIGROS ZUERICH"]["sub"]) == ("groceries", "food")
+    # the proposed rule regex must actually match the source description
+    import re as _re
+    assert _re.search(by["MIGROS ZUERICH"]["match"], "MIGROS ZUERICH", _re.I)
+    # accepting a proposal through the normal assign flow applies it
+    p = by["MIGROS ZUERICH"]
+    client.post("/api/assign", json={"match": p["match"], "cat": p["cat"], "sub": p["sub"]})
+    assert any(t["cat"] == "groceries" for t in client.get("/api/txns").json())
+
+
+def test_ai_categorize_rejects_non_json_reply(client, monkeypatch):
+    from spendflow import app as app_mod
+    client.post("/api/import/txns", json=TXNS)
+    monkeypatch.setattr(app_mod, "_run_claude",
+                        lambda p, timeout=180: "Sorry, I cannot help with that.")
+    assert client.post("/api/ai/categorize").status_code == 502
+
+
+def test_ai_insights_passes_text_through(client, monkeypatch):
+    from spendflow import app as app_mod
+    client.post("/api/import/txns", json=TXNS)
+    monkeypatch.setattr(app_mod, "_run_claude",
+                        lambda p, timeout=180: "## Observations\n- spend less")
+    assert client.post("/api/ai/insights").json()["text"].startswith("## Observations")
+
+
+def test_extract_json_tolerates_fences_and_prose():
+    from spendflow.app import _extract_json
+    assert _extract_json('Here you go:\n```json\n[{"a": 1}]\n```\nDone!') == [{"a": 1}]
+    assert _extract_json('{"x": [1, 2]}') == {"x": [1, 2]}
 
 
 # ---------- categories overview + bulk merge ----------
