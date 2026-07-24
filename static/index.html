@@ -182,6 +182,71 @@
   .combo-list .opt.create b { color:var(--accent); }
   .combo-list .none { padding:5px 9px; font-size:12.5px; color:var(--muted); }
 
+  /* transactions ledger */
+  #lFilters { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  #lFilters input[type=text] { flex:1; min-width:200px; }
+  th.sortable { cursor:pointer; user-select:none; }
+  th.sortable:hover { color:var(--text); }
+  th.sortable .arr { font-size:9px; }
+  #ledgerBody tr:hover { background:var(--panel2); }
+  #ledgerBody td.lcat { color:var(--muted); font-size:11.5px; }
+  #ledgerBody td.ldesc { max-width:0; }
+  #ledgerBody .ldtext { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lnote { color:var(--muted); font-size:11.5px; margin-top:1px; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; }
+  .tagpill { display:inline-block; padding:0 6px; border-radius:9px; font-size:10.5px;
+             background:rgba(88,201,185,.13); color:var(--accent); cursor:pointer; }
+  .tagpill:hover { background:rgba(88,201,185,.28); }
+  .tagpill.inherit { background:none; border:1px solid #2c5b54; }
+  .tcount { color:var(--muted); font-size:10.5px; float:right; margin-left:10px; }
+  #ledgerBody tr.recon { opacity:.45; }
+  #ledgerBody .lpin { margin-left:6px; font-size:10px; color:var(--accent); }
+  tr.leditor td { background:var(--panel2); border-top:none; }
+  tr.leditor .g-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:4px 0; }
+
+  /* budgets */
+  #budgetList .brow { margin-bottom:9px; }
+  #budgetList .bhead { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:3px; }
+  #budgetList .bhead .bcat { font-weight:550; }
+  #budgetList .bhead .bnum { color:var(--muted); font-variant-numeric:tabular-nums; }
+  #budgetList .bbar { height:7px; border-radius:4px; background:var(--panel2); overflow:hidden; }
+  #budgetList .bfill { height:100%; border-radius:4px; background:var(--accent); }
+  #budgetList .over .bfill { background:#e0705a; }
+  #budgetList .over .bnum { color:#e0917a; font-weight:600; }
+  #budgetForm .frow { display:flex; gap:10px; align-items:center; margin-bottom:6px; }
+  #budgetForm .frow label { flex:1; font-size:12.5px; }
+  #budgetForm .frow input { width:110px; text-align:right; }
+
+  /* recurring */
+  #recurList .rrow2 { display:flex; gap:10px; align-items:baseline; padding:6px 0;
+                      border-bottom:1px solid var(--line); font-size:12.5px; }
+  #recurList .rrow2:last-child { border-bottom:none; }
+  #recurList .rdot { font-size:9px; }
+  #recurList .rdot.active { color:var(--accent); }
+  #recurList .rdot.stopped { color:#e0705a; }
+  #recurList .rname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #recurList .rmo { color:var(--muted); font-size:11px; white-space:nowrap; }
+  #recurList .ramt { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:550; }
+  #recurList .rchg { font-size:11px; padding:0 6px; border-radius:9px; white-space:nowrap;
+                     border:1px solid #5c4636; color:#e0b06a; }
+  #recurList .rstop { font-size:11px; padding:0 6px; border-radius:9px; white-space:nowrap;
+                      border:1px solid #5c3a33; color:#e0917a; }
+  #recurList .rorig { color:var(--muted); font-size:10.5px; }
+  #recurList .rrow2.rhid { opacity:.5; }
+  #recurList .rhide-bar { padding:7px 0 3px; font-size:11.5px; }
+  #recurList .rhide-bar a { color:var(--muted); }
+  .rec-editor { display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+                background:var(--panel2); border:1px solid var(--accent);
+                border-radius:8px; padding:9px 10px; margin:6px 0; }
+  .rec-editor input[type=text] { min-width:180px; }
+  .rec-editor label { font-size:12px; color:var(--muted); }
+
+  /* month compare */
+  #cmpBody td.pos2 { color:var(--pos, #58c9b9); }
+  #cmpBody .dneg { color:#e0917a; }   /* spending increased */
+  #cmpBody .dpos { color:var(--accent); }  /* spending decreased */
+  #cmpBody tr.total td { border-top:2px solid var(--line); font-weight:600; }
+
   /* drill-down dialog */
   #drill { position:fixed; inset:0; z-index:50; background:rgba(6,10,13,.66);
            display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -218,6 +283,7 @@
 
 <div id="tabs">
   <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="transactions">Transactions <span class="badge" id="tabTx"></span></button>
   <button data-tab="documents">Documents <span class="badge" id="tabDocs"></span></button>
   <button data-tab="categorize">Categorize <span class="badge" id="tabCat"></span></button>
   <button data-tab="rules">Rules <span class="badge" id="tabRules"></span></button>
@@ -257,7 +323,74 @@
     Click any category, subcategory or bar to list the transactions behind it.</div>
   <div id="chart"></div>
   <div id="trend"></div>
+
+  <div class="cols">
+    <div class="card" id="budgetCard">
+      <h3>Budgets <span id="budgetMonth" style="color:var(--muted);font-weight:400"></span>
+        <button class="small" id="budgetEdit" style="float:right">edit</button></h3>
+      <div class="hint">Monthly limits per category. Bars show the selected month
+        (or the latest); red means over.</div>
+      <div id="budgetList"></div>
+      <div id="budgetForm" style="display:none">
+        <div id="budgetRows"></div>
+        <div class="actions">
+          <button class="primary small" id="budgetSave">Save</button>
+          <button class="small" id="budgetCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="recurringCard">
+      <h3>Recurring <span id="recurTotal" style="color:var(--muted);font-weight:400"></span></h3>
+      <div class="hint">Subscriptions and standing orders — merchants charged most
+        months at a stable amount. Flags price drift and stopped payments.</div>
+      <div id="recurList"></div>
+    </div>
+  </div>
+
+  <div class="card" id="compareCard">
+    <h3>Compare months</h3>
+    <div class="hint">Which categories moved between two months, and by how much.</div>
+    <div class="row" style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+      <select id="cmpA"></select> <span style="color:var(--muted)">vs</span>
+      <select id="cmpB"></select>
+    </div>
+    <table><thead><tr><th>Category</th>
+      <th style="width:110px;text-align:right" id="cmpAh">A</th>
+      <th style="width:110px;text-align:right" id="cmpBh">B</th>
+      <th style="width:130px;text-align:right">Δ</th></tr></thead>
+      <tbody id="cmpBody"></tbody></table>
+  </div>
   </div><!-- /pane-overview -->
+
+  <div class="tabpane" id="pane-transactions">
+  <div class="card" id="ledgerCard">
+    <h3>Transactions <span id="ledgerCount" style="color:var(--muted);font-weight:400"></span></h3>
+    <div id="lFilters">
+      <input type="text" id="lSearch" placeholder="Search description, merchant or note — #tag matches tags">
+      <select id="lCat"><option value="">all categories</option></select>
+      <select id="lTag"><option value="">all tags</option></select>
+      <select id="lMonth"><option value="">all months</option></select>
+      <span class="toggle">
+        <button class="small active" data-lk="all">All</button><button class="small" data-lk="expense">Expenses</button><button class="small" data-lk="income">Income</button>
+      </span>
+      <label class="inline"><input type="checkbox" id="lRecon"> include reconciled bills</label>
+    </div>
+    <table id="ledgerTable">
+      <thead><tr>
+        <th style="width:92px" class="sortable" data-sort="date">Date <span class="arr"></span></th>
+        <th>Description</th>
+        <th style="width:170px">Category</th>
+        <th style="width:112px;text-align:right" class="sortable" data-sort="amount">Amount <span class="arr"></span></th>
+        <th style="width:40px"></th>
+      </tr></thead>
+      <tbody id="ledgerBody"></tbody>
+    </table>
+    <div id="ledgerMore" style="display:none;margin-top:10px">
+      <button class="small" id="ledgerMoreBtn"></button>
+    </div>
+    <div id="ledgerFoot" class="hint" style="margin:10px 0 0"></div>
+  </div>
+  </div><!-- /pane-transactions -->
 
   <div class="tabpane" id="pane-documents">
   <div class="card" id="stmtCard">
@@ -509,7 +642,7 @@ $('applyMap').onclick = async () => {
 };
 
 // ---------- render ----------
-$('monthSel').onchange = render;
+$('monthSel').onchange = () => { render(); renderBudgets(); };
 
 async function refresh() {
   txns = await api('/api/txns');
@@ -519,13 +652,25 @@ async function refresh() {
   const cur = $('monthSel').value;
   $('monthSel').innerHTML = '<option value="">all</option>' + months.map(m => `<option>${m}</option>`).join('');
   $('monthSel').value = months.includes(cur) ? cur : '';
+  // ledger filter options mirror the data; keep current selections where possible
+  const lm = $('lMonth').value, lc = $('lCat').value;
+  $('lMonth').innerHTML = '<option value="">all months</option>' + months.map(m => `<option>${m}</option>`).join('');
+  $('lMonth').value = months.includes(lm) ? lm : '';
+  const cats = [...new Set(txns.map(t => t.cat))].sort();
+  $('lCat').innerHTML = '<option value="">all categories</option>' + cats.map(c => `<option>${c}</option>`).join('');
+  $('lCat').value = cats.includes(lc) ? lc : '';
+  refreshTagFilter();
   render();
   renderTrend();
+  renderLedger();
   loadRules();
   loadUncategorized();
   loadReview();
   loadCategories();
   loadStatements();
+  loadBudgets();
+  loadRecurring();
+  loadCompare();
 }
 
 function render() {
@@ -540,7 +685,8 @@ function render() {
   const saved = totalIn - totalOut;
 
   $('stats').style.display = 'flex';
-  ['uncatCard', 'rulesCard', 'reviewCard', 'catsCard', 'stmtCard']
+  ['uncatCard', 'rulesCard', 'reviewCard', 'catsCard', 'stmtCard',
+   'ledgerCard', 'budgetCard', 'recurringCard', 'compareCard']
     .forEach(id => $(id).style.display = 'block');
   ['chart', 'trend', 'chartHint'].forEach(id => $(id).style.display = 'block');
   $('sIn').textContent = fmt(totalIn);
@@ -883,10 +1029,11 @@ function showDrill(f) {
     <div><div class="k">Average</div><div class="v">${rows.length ? fmt(total / rows.length) : '–'}</div></div>
     <div><div class="k">Largest</div><div class="v">${rows.length ? fmt(Math.abs(rows[0].amount)) : '–'}</div></div>`;
 
+  const disp = collectTags();
   $('drillBody').innerHTML = rows.length ? rows.map(t => `
     <tr>
       <td class="mono">${esc(t.date || '—')}</td>
-      <td>${esc(t.desc)}</td>
+      <td>${esc(t.desc)}${t.note ? noteHtml(t.note) : ''}${inheritedHtml(t, disp)}</td>
       <td class="dcat">${esc(t.cat)}${t.sub ? ' · ' + esc(t.sub) : ''}</td>
       <td class="num ${t.amount > 0 ? 'pos' : 'neg'}">${fmt(Math.abs(t.amount))}</td>
     </tr>`).join('')
@@ -902,6 +1049,464 @@ $('drill').onclick = e => { if (e.target === $('drill')) hideDrill(); };  // bac
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('drill').hidden) hideDrill();
 });
+
+// ---------- Transactions ledger ----------
+let lSort = {key: 'date', dir: -1}, lKind = 'all', lLimit = 300;
+
+function ledgerRows() {
+  const q = $('lSearch').value.trim().toLowerCase();
+  const cat = $('lCat').value, month = $('lMonth').value, tag = $('lTag').value;
+  const showRecon = $('lRecon').checked;
+  const list = txns.filter(t => {
+    if (!showRecon && t.reconciled) return false;
+    if (month && !(t.date || '').startsWith(month)) return false;
+    if (cat && t.cat !== cat) return false;
+    if (tag && !effTags(t).includes(tag)) return false;   // exact tag match, incl. inherited
+    if (lKind === 'expense' && !(t.amount < 0)) return false;
+    if (lKind === 'income' && !(t.amount > 0)) return false;
+    if (q) {
+      if (q.startsWith('#')) {   // tag search: prefix over the txn's effective tags
+        if (!effTags(t).some(x => x.startsWith(q))) return false;
+      } else if (!((t.desc || '').toLowerCase().includes(q)
+                || (t.merchant || '').toLowerCase().includes(q)
+                || (t.note || '').toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
+  const k = lSort.key;
+  // amount sorts by magnitude — the column displays absolute values, so the
+  // sort order must match what the user sees, not the sign convention
+  list.sort((a, b) => {
+    const va = k === 'amount' ? Math.abs(a.amount) : (a.date || '');
+    const vb = k === 'amount' ? Math.abs(b.amount) : (b.date || '');
+    return (va < vb ? -1 : va > vb ? 1 : 0) * lSort.dir;
+  });
+  return list;
+}
+
+const TAG_RX = /#[\p{L}\d_-]+/gu;
+const noteTags = note => [...(note || '').matchAll(TAG_RX)].map(m => m[0].toLowerCase());
+
+// merchant -> tags inherited from its recurring label ('#taxes' on RCJU tags
+// every RCJU transaction, past and future). Rebuilt whenever recurring loads.
+let recurTagMap = new Map();
+
+// A transaction's effective tags: its own note's plus its merchant's inherited.
+const effTags = t =>
+  [...new Set([...noteTags(t.note), ...(recurTagMap.get(t.merchant) || [])])];
+
+// Every tag in use, keyed lowercase (so #Holiday and #holiday count as one),
+// keeping the first-seen spelling for display. Counted once per transaction —
+// inherited and own tags alike — so counts answer "how many txns match".
+function collectTags() {
+  const tags = new Map();
+  const display = new Map();   // lowercase -> first-seen spelling
+  for (const t of txns) {
+    for (const src of [t.note, recurLabel(t.merchant)])
+      for (const m of (src || '').matchAll(TAG_RX))
+        if (!display.has(m[0].toLowerCase())) display.set(m[0].toLowerCase(), m[0]);
+    for (const k of effTags(t)) {
+      const e = tags.get(k) || {display: display.get(k) || k, n: 0};
+      e.n++; tags.set(k, e);
+    }
+  }
+  return tags;
+}
+
+// A note renders under the description; '#tags' inside it become clickable pills.
+const noteHtml = note => {
+  const esc = s => String(s).replace(/</g, '&lt;');
+  return `<div class="lnote">💬 ${esc(note).replace(TAG_RX,
+    m => `<span class="tagpill" title="show all #${m.slice(1)} transactions">${m}</span>`)}</div>`;
+};
+
+// Tags inherited from the merchant's recurring label, shown hollow with a ↻
+// so they read as "applies to every txn of this merchant", not this one note.
+function inheritedHtml(t, disp) {
+  const inh = (recurTagMap.get(t.merchant) || [])
+    .filter(k => !noteTags(t.note).includes(k));
+  if (!inh.length) return '';
+  return `<div class="lnote">↻ ${inh.map(k =>
+    `<span class="tagpill inherit" title="from the recurring entry for this merchant">${
+      (disp.get(k) || {display: k}).display}</span>`).join(' ')}</div>`;
+}
+
+// Clicking any tag pill — in the ledger or a chart drill-down — filters the
+// ledger to exactly that tag.
+document.addEventListener('click', e => {
+  const p = e.target.closest('.tagpill');
+  if (!p) return;
+  hideDrill();
+  showTab('transactions');
+  $('lSearch').value = '';
+  $('lTag').value = p.textContent.toLowerCase();
+  renderLedger();
+});
+
+function refreshTagFilter() {
+  const lt = $('lTag').value;
+  const tagList = [...collectTags().entries()].sort((a, b) => b[1].n - a[1].n);
+  $('lTag').innerHTML = '<option value="">all tags</option>'
+    + tagList.map(([k, e]) => `<option value="${k}">${e.display} (${e.n})</option>`).join('');
+  $('lTag').value = tagList.some(([k]) => k === lt) ? lt : '';
+  $('lTag').style.display = tagList.length ? '' : 'none';   // hide until tags exist
+}
+
+function renderLedger() {
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const list = ledgerRows();
+  const disp = collectTags();   // one pass; reused for every row's inherited pills
+  $('ledgerBody').innerHTML = list.slice(0, lLimit).map(t => `
+    <tr class="${t.reconciled ? 'recon' : ''}">
+      <td class="mono">${esc(t.date || '—')}</td>
+      <td class="ldesc" title="${esc(t.desc)}"><div class="ldtext">${esc(t.desc)}</div>${
+        t.note ? noteHtml(t.note) : ''}${inheritedHtml(t, disp)}</td>
+      <td class="lcat">${esc(t.cat)}${t.sub ? ' · ' + esc(t.sub) : ''}${
+        t.source === 'manual' ? '<span class="lpin" title="manually tagged — immune to rules">pinned</span>' : ''}</td>
+      <td class="num ${t.amount > 0 ? 'pos' : 'neg'}">${fmt(Math.abs(t.amount))}</td>
+      <td class="tagcell"><button class="small" data-led="${t.id}" title="re-categorize this transaction">✎</button></td>
+    </tr>`).join('');
+  $('ledgerMore').style.display = list.length > lLimit ? 'block' : 'none';
+  $('ledgerMoreBtn').textContent = `show all ${list.length}`;
+  const inSum = list.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+  const outSum = -list.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
+  $('ledgerCount').textContent = txns.length ? `· ${list.length} of ${txns.length}` : '';
+  $('ledgerFoot').textContent = list.length
+    ? `in ${fmt(inSum)} · out ${fmt(outSum)} · net ${fmt(inSum - outSum)}` : 'No matches.';
+  document.querySelectorAll('#ledgerTable th.sortable').forEach(th =>
+    th.querySelector('.arr').textContent =
+      th.dataset.sort === lSort.key ? (lSort.dir < 0 ? '▼' : '▲') : '');
+  $('ledgerBody').querySelectorAll('button[data-led]').forEach(b =>
+    b.onclick = () => openLedgerEdit(+b.dataset.led, b.closest('tr')));
+}
+
+// One shared inline editor row, moved under whichever transaction is being edited.
+const ledRow = document.createElement('tr');
+ledRow.className = 'leditor';
+ledRow.innerHTML = `<td colspan="5"><div class="g-row">
+  <div class="combo"><input type="text" id="leCat" placeholder="Category" autocomplete="off">
+    <div class="combo-list" id="leCatList"></div></div>
+  <div class="combo"><input type="text" id="leSub" placeholder="Subcategory (optional)" autocomplete="off">
+    <div class="combo-list" id="leSubList"></div></div>
+  <div class="combo" style="flex:1;min-width:180px">
+    <input type="text" id="leNote" placeholder="Note — free text, # for tags" autocomplete="off">
+    <div class="combo-list" id="leNoteList"></div></div>
+  <button class="primary small" id="leSave">Save</button>
+  <button class="small" id="leCancel">Cancel</button>
+  <span style="color:var(--muted);font-size:11.5px">category change pins this transaction against rules — save as 'Uncategorized' to untag</span>
+</div></td>`;
+let ledEditId = null;
+const leCatIn = ledRow.querySelector('#leCat'), leSubIn = ledRow.querySelector('#leSub');
+makeCombo(leCatIn, ledRow.querySelector('#leCatList'), () => Object.keys(catMap).sort());
+makeCombo(leSubIn, ledRow.querySelector('#leSubList'),
+          () => (catMap[leCatIn.value.trim()] || []).slice().sort());
+
+const leNoteIn = ledRow.querySelector('#leNote');
+
+// Tag autocomplete for the note field: typing '#…' suggests existing tags
+// (with usage counts) so #holiday doesn't grow a #holidays twin. Token-based —
+// it completes only the #word at the caret, leaving the rest of the note alone.
+function attachTagComplete(input, listEl) {
+  let items = [], active = -1;
+  const close = () => { listEl.classList.remove('open'); active = -1; };
+  const token = () => {
+    const pos = input.selectionStart ?? input.value.length;
+    const m = input.value.slice(0, pos).match(/#[\p{L}\d_-]*$/u);
+    return m ? {start: pos - m[0].length, text: m[0], pos} : null;
+  };
+  const open = () => {
+    const tk = token();
+    if (!tk) return close();
+    const q = tk.text.toLowerCase();
+    items = [...collectTags().entries()]
+      .filter(([k]) => k.startsWith(q))
+      .sort((a, b) => b[1].n - a[1].n).slice(0, 8);
+    if (!items.length) return close();
+    listEl.innerHTML = items.map(([, e], i) =>
+      `<div class="opt" data-i="${i}">${e.display} <span class="tcount">${e.n}×</span></div>`).join('');
+    listEl.classList.add('open'); active = -1;
+    listEl.querySelectorAll('.opt').forEach(el =>
+      el.onmousedown = ev => { ev.preventDefault(); pick(+el.dataset.i); });
+  };
+  const pick = i => {
+    const tk = token();
+    if (!tk || !items[i]) return;
+    const tag = items[i][1].display;
+    input.value = input.value.slice(0, tk.start) + tag + ' ' + input.value.slice(tk.pos);
+    const np = tk.start + tag.length + 1;
+    input.setSelectionRange(np, np);
+    close();
+  };
+  const hl = () => listEl.querySelectorAll('.opt').forEach((el, i) =>
+    el.classList.toggle('active', i === active));
+  input.addEventListener('input', open);
+  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('keydown', e => {
+    if (!listEl.classList.contains('open')) return;
+    const n = listEl.querySelectorAll('.opt').length;
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, n - 1); hl(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); hl(); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); pick(active); }
+    else if (e.key === 'Escape') { close(); }
+  });
+}
+attachTagComplete(leNoteIn, ledRow.querySelector('#leNoteList'));
+
+function openLedgerEdit(id, tr) {
+  const t = txns.find(x => x.id === id);
+  if (!t) return;
+  ledEditId = id;
+  leCatIn.value = t.cat === 'Uncategorized' ? '' : t.cat;
+  leSubIn.value = t.sub || '';
+  leNoteIn.value = t.note || '';
+  tr.after(ledRow);
+  leCatIn.focus();
+}
+ledRow.querySelector('#leCancel').onclick = () => { ledRow.remove(); ledEditId = null; };
+ledRow.querySelector('#leSave').onclick = async () => {
+  const t = txns.find(x => x.id === ledEditId);
+  const cat = leCatIn.value.trim() || 'Uncategorized';
+  const sub = leSubIn.value.trim() || null;
+  const note = leNoteIn.value.trim() || null;
+  try {
+    const done = [];
+    // only a category change pins the txn as manual — a note alone must not
+    if (cat !== t.cat || sub !== (t.sub || null)) {
+      await api('/api/assign', {method: 'POST',
+        body: JSON.stringify({ids: [ledEditId], cat, sub})});
+      done.push(cat === 'Uncategorized' ? 'untagged' : `tagged as ${cat}`);
+    }
+    if (note !== (t.note || null)) {
+      await api('/api/note', {method: 'POST',
+        body: JSON.stringify({id: ledEditId, note})});
+      done.push(note ? 'note saved' : 'note cleared');
+    }
+    if (done.length) toast(done.join(' · '));
+    ledRow.remove(); ledEditId = null;
+    if (done.length) refresh();
+  } catch (err) { alert(err.message); }
+};
+
+$('lSearch').oninput = renderLedger;
+$('lCat').onchange = renderLedger;
+$('lTag').onchange = renderLedger;
+$('lMonth').onchange = renderLedger;
+$('lRecon').onchange = renderLedger;
+document.querySelectorAll('#lFilters [data-lk]').forEach(b => b.onclick = () => {
+  lKind = b.dataset.lk;
+  document.querySelectorAll('#lFilters [data-lk]').forEach(x =>
+    x.classList.toggle('active', x === b));
+  renderLedger();
+});
+document.querySelectorAll('#ledgerTable th.sortable').forEach(th => th.onclick = () => {
+  if (lSort.key === th.dataset.sort) lSort.dir *= -1;
+  else lSort = {key: th.dataset.sort, dir: -1};
+  renderLedger();
+});
+$('ledgerMoreBtn').onclick = () => { lLimit = Infinity; renderLedger(); };
+
+// ---------- Budgets ----------
+let budgets = {};
+
+function budgetMonthKey() {
+  return $('monthSel').value
+    || [...new Set(txns.map(t => (t.date || '').slice(0, 7)))].filter(Boolean).sort().at(-1)
+    || '';
+}
+
+async function loadBudgets() {
+  budgets = await api('/api/budgets');
+  renderBudgets();
+}
+
+function renderBudgets() {
+  const m = budgetMonthKey();
+  $('budgetMonth').textContent = m ? `· ${m}` : '';
+  const cats = Object.keys(budgets).sort((a, b) => budgets[b] - budgets[a]);
+  if (!cats.length) {
+    $('budgetList').innerHTML =
+      '<div class="hint" style="margin:0">No budgets yet — click <b>edit</b> to set monthly limits per category.</div>';
+    return;
+  }
+  const spent = {};
+  for (const t of txns) {
+    if (t.reconciled || t.amount >= 0) continue;
+    if (m && !(t.date || '').startsWith(m)) continue;
+    spent[t.cat] = (spent[t.cat] || 0) + -t.amount;
+  }
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('budgetList').innerHTML = cats.map(c => {
+    const s = spent[c] || 0, lim = budgets[c];
+    return `<div class="brow ${s > lim ? 'over' : ''}">
+      <div class="bhead"><span class="bcat">${esc(c)}</span>
+        <span class="bnum">${fmt(s)} / ${fmt(lim)}${s > lim ? ' · over by ' + fmt(s - lim) : ''}</span></div>
+      <div class="bbar"><div class="bfill" style="width:${Math.min(100, 100 * s / lim)}%"></div></div>
+    </div>`;
+  }).join('');
+}
+
+$('budgetEdit').onclick = () => {
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const cats = catRows.map(c => c.cat).filter(c => c !== 'Uncategorized').sort();
+  $('budgetRows').innerHTML = cats.map(c => `
+    <div class="frow"><label>${esc(c)}</label>
+      <input type="number" min="0" step="10" data-bcat="${esc(c)}" value="${budgets[c] || ''}"
+             placeholder="no limit"></div>`).join('');
+  $('budgetForm').style.display = 'block';
+  $('budgetList').style.display = 'none';
+};
+$('budgetCancel').onclick = () => {
+  $('budgetForm').style.display = 'none';
+  $('budgetList').style.display = 'block';
+};
+$('budgetSave').onclick = async () => {
+  const map = {};
+  $('budgetRows').querySelectorAll('input[data-bcat]').forEach(i => {
+    const v = parseFloat(i.value);
+    if (v > 0) map[i.dataset.bcat] = v;
+  });
+  try {
+    budgets = await api('/api/budgets', {method: 'PUT', body: JSON.stringify(map)});
+    $('budgetForm').style.display = 'none';
+    $('budgetList').style.display = 'block';
+    toast('Budgets saved');
+    renderBudgets();
+  } catch (err) { alert(err.message); }
+};
+
+// ---------- Recurring ----------
+let recurRows = [], recurShowHidden = false;
+
+const recurLabel = merchant =>
+  recurRows.find(r => r.merchant === merchant)?.label || '';
+
+async function loadRecurring() {
+  recurRows = await api('/api/recurring');
+  // '#tags' in a recurring label apply to every transaction of that merchant —
+  // rebuild the inheritance map, then let the ledger and tag filter pick it up.
+  recurTagMap = new Map(recurRows
+    .filter(r => r.label)
+    .map(r => [r.merchant, noteTags(r.label)]));
+  renderRecurring();
+  refreshTagFilter();
+  renderLedger();
+}
+
+function renderRecurring() {
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const vis = recurRows.filter(r => !r.ignored);
+  const hid = recurRows.filter(r => r.ignored);
+  const act = vis.filter(r => r.status === 'active');
+  $('recurTotal').textContent = act.length
+    ? `· ${fmt(act.reduce((s, r) => s + r.monthly, 0))}/mo across ${act.length}` : '';
+
+  const row = (r, hidden) => `
+    <div class="rrow2 ${hidden ? 'rhid' : ''}" data-rm="${esc(r.merchant)}">
+      <span class="rdot ${r.status}">●</span>
+      <span class="rname" title="${esc(r.merchant)}">${
+        r.label ? `<b>${esc(r.label)}</b> <span class="rorig">${esc(r.merchant)}</span>` : esc(r.merchant)}</span>
+      ${r.change ? `<span class="rchg" title="latest month vs the usual amount">${r.change > 0 ? '+' : ''}${r.change.toFixed(2)}</span>` : ''}
+      ${r.status === 'stopped' ? `<span class="rstop" title="last charged ${r.last}">stopped ${r.last}</span>` : ''}
+      <span class="rmo">${r.n_months}mo</span>
+      <span class="ramt">${fmt(r.monthly)}</span>
+      ${hidden
+        ? `<button class="small" data-runhide="${esc(r.merchant)}" title="restore to the list">restore</button>`
+        : `<button class="small" data-redit="${esc(r.merchant)}" title="rename or hide">✎</button>`}
+    </div>`;
+
+  let html = vis.length ? vis.map(r => row(r, false)).join('')
+    : '<div class="hint" style="margin:0">Nothing recurring detected yet — needs 3+ months of history per merchant.</div>';
+  if (hid.length) {
+    html += `<div class="rhide-bar"><a href="#" id="recurToggleHidden">${
+      recurShowHidden ? 'hide' : 'show'} ${hid.length} marked not recurring</a></div>`;
+    if (recurShowHidden) html += hid.map(r => row(r, true)).join('');
+  }
+  $('recurList').innerHTML = html;
+
+  const tog = $('recurToggleHidden');
+  if (tog) tog.onclick = e => { e.preventDefault(); recurShowHidden = !recurShowHidden; renderRecurring(); };
+  $('recurList').querySelectorAll('button[data-redit]').forEach(b =>
+    b.onclick = () => openRecurEdit(b.dataset.redit, b.closest('.rrow2')));
+  $('recurList').querySelectorAll('button[data-runhide]').forEach(b =>
+    b.onclick = async () => {
+      const r = recurRows.find(x => x.merchant === b.dataset.runhide);
+      await api('/api/recurring/override', {method: 'POST',
+        body: JSON.stringify({merchant: r.merchant, label: r.label, ignore: false})});
+      toast('Restored'); loadRecurring();
+    });
+}
+
+// One shared inline editor, moved under whichever recurring row is being edited.
+const recEd = document.createElement('div');
+recEd.className = 'rec-editor';
+recEd.innerHTML = `
+  <input type="text" id="reLabel" placeholder="Display name and/or #tags (apply to all this merchant's txns)">
+  <label class="inline"><input type="checkbox" id="reIgnore"> not recurring — hide from this list</label>
+  <button class="primary small" id="reSave">Save</button>
+  <button class="small" id="reCancel">Cancel</button>`;
+let recEditMerchant = null;
+
+function openRecurEdit(merchant, rowEl) {
+  const r = recurRows.find(x => x.merchant === merchant);
+  if (!r) return;
+  recEditMerchant = merchant;
+  recEd.querySelector('#reLabel').value = r.label || '';
+  recEd.querySelector('#reIgnore').checked = r.ignored;
+  rowEl.after(recEd);
+  recEd.querySelector('#reLabel').focus();
+}
+recEd.querySelector('#reCancel').onclick = () => { recEd.remove(); recEditMerchant = null; };
+recEd.querySelector('#reSave').onclick = async () => {
+  try {
+    await api('/api/recurring/override', {method: 'POST', body: JSON.stringify({
+      merchant: recEditMerchant,
+      label: recEd.querySelector('#reLabel').value.trim() || null,
+      ignore: recEd.querySelector('#reIgnore').checked})});
+    toast('Saved');
+    recEd.remove(); recEditMerchant = null;
+    loadRecurring();
+  } catch (err) { alert(err.message); }
+};
+
+// ---------- Month comparison ----------
+let cmpStats = [];
+
+async function loadCompare() {
+  cmpStats = await api('/api/stats/monthly');
+  const months = [...new Set(cmpStats.map(s => s.month))].sort();
+  if (months.length < 2) { $('compareCard').style.display = 'none'; return; }
+  const opts = months.map(m => `<option>${m}</option>`).join('');
+  const a = $('cmpA'), b = $('cmpB'), pa = a.value, pb = b.value;
+  a.innerHTML = opts; b.innerHTML = opts;
+  a.value = months.includes(pa) ? pa : months.at(-2);
+  b.value = months.includes(pb) ? pb : months.at(-1);
+  renderCompare();
+}
+
+function renderCompare() {
+  const A = $('cmpA').value, B = $('cmpB').value;
+  $('cmpAh').textContent = A; $('cmpBh').textContent = B;
+  const sum = m => {
+    const o = {};
+    for (const s of cmpStats) if (s.month === m && s.spent > 0) o[s.cat] = s.spent;
+    return o;
+  };
+  const a = sum(A), b = sum(B);
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const rows = [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .map(c => ({c, va: a[c] || 0, vb: b[c] || 0, d: (b[c] || 0) - (a[c] || 0)}))
+    .sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+  const ta = rows.reduce((s, r) => s + r.va, 0), tb = rows.reduce((s, r) => s + r.vb, 0);
+  const dcell = d => `<td class="num ${d > 0 ? 'dneg' : d < 0 ? 'dpos' : ''}">${
+    d > 0 ? '▲ +' : d < 0 ? '▼ −' : ''}${fmt(Math.abs(d))}</td>`;
+  $('cmpBody').innerHTML = rows.map(r => `
+    <tr><td>${esc(r.c)}</td><td class="num">${r.va ? fmt(r.va) : '–'}</td>
+        <td class="num">${r.vb ? fmt(r.vb) : '–'}</td>${dcell(r.d)}</tr>`).join('')
+    + `<tr class="total"><td>Total</td><td class="num">${fmt(ta)}</td>
+       <td class="num">${fmt(tb)}</td>${dcell(tb - ta)}</tr>`;
+}
+$('cmpA').onchange = renderCompare;
+$('cmpB').onchange = renderCompare;
 
 // ---------- Tabs ----------
 function showTab(name) {
