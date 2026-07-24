@@ -1,5 +1,7 @@
 # SpendFlow
 
+**import → coverage → categorize → tag → budget → analyze**
+
 Private, local spending analysis from bank statements. FastAPI + SQLite backend,
 single-page frontend with Sankey + monthly trend charts. No data leaves your machine.
 
