@@ -458,6 +458,83 @@ def detect_anomalies(txns: list[dict]) -> list[dict]:
     return out
 
 
+# ---------- recurring-payment detection (pure; feeds the Recurring card) ----------
+def _month_seq(lo: str, hi: str) -> list[str]:
+    """Calendar months from 'YYYY-MM' lo to hi inclusive."""
+    y, m = int(lo[:4]), int(lo[5:7])
+    out = []
+    while (key := f"{y:04d}-{m:02d}") <= hi:
+        out.append(key)
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def detect_recurring(txns: list[dict]) -> list[dict]:
+    """Find recurring expenses: merchants charged in most months, at a stable
+    monthly amount, with few charges per month (a subscription or standing order,
+    not habitual shopping).
+
+    Pure: needs merchant, date, amount. 'Now' is the newest month in the data, not
+    the wall clock, so results are reproducible from the data alone.
+
+    Heuristics, deliberately simple:
+      - seen in >= 3 distinct months, covering >= 75% of its first..last span
+      - <= 2.5 charges per active month on average (Netflix bills once; a
+        supermarket you visit weekly is not a subscription)
+      - monthly totals stable: MAD/median <= 0.25
+    Flags: status 'stopped' if absent from the newest month AND the one before;
+    'change' when the latest monthly total drifts >1% and >1.00 from the median
+    of the earlier months.
+    """
+    by_merchant: dict[str, list[dict]] = {}
+    data_hi = ""
+    for t in txns:
+        if t.get("amount", 0) >= 0 or not t.get("merchant") or not t.get("date"):
+            continue
+        by_merchant.setdefault(t["merchant"], []).append(t)
+        data_hi = max(data_hi, t["date"][:7])
+
+    out: list[dict] = []
+    for merchant, ts in by_merchant.items():
+        monthly: dict[str, float] = {}
+        for t in ts:
+            m = t["date"][:7]
+            monthly[m] = monthly.get(m, 0.0) + -t["amount"]
+        months = sorted(monthly)
+        if len(months) < 3:
+            continue
+        span = _month_seq(months[0], months[-1])
+        if len(months) / len(span) < 0.75:
+            continue
+        if len(ts) / len(months) > 2.5:
+            continue
+        totals = sorted(monthly.values())
+        mid = len(totals) // 2
+        median = totals[mid] if len(totals) % 2 else (totals[mid - 1] + totals[mid]) / 2
+        devs = sorted(abs(v - median) for v in totals)
+        mad = devs[mid] if len(devs) % 2 else (devs[mid - 1] + devs[mid]) / 2
+        if median <= 0 or mad / median > 0.25:
+            continue
+
+        prev = _month_seq(months[0], data_hi)[-2] if len(_month_seq(months[0], data_hi)) > 1 else data_hi
+        stopped = months[-1] < prev
+        last_total = monthly[months[-1]]
+        earlier = sorted(v for m, v in monthly.items() if m != months[-1])
+        emid = len(earlier) // 2
+        emed = earlier[emid] if len(earlier) % 2 else (earlier[emid - 1] + earlier[emid]) / 2
+        change = round(last_total - emed, 2)
+        if abs(change) <= max(1.0, emed * 0.01) or stopped:
+            change = 0.0
+
+        out.append({"merchant": merchant, "monthly": round(median, 2),
+                    "n_months": len(months), "first": months[0], "last": months[-1],
+                    "status": "stopped" if stopped else "active",
+                    "change": change, "per_month": round(len(ts) / len(months), 1)})
+
+    out.sort(key=lambda r: (r["status"] != "active", -r["monthly"]))
+    return out
+
+
 # ---------- Viseca (Raiffeisen) credit-card statements ----------
 _VISECA_TXN = re.compile(
     rf"^(\d{{2}}\.\d{{2}}\.\d{{2}})\s+\d{{2}}\.\d{{2}}\.\d{{2}}\s+(.+?)"

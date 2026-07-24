@@ -12,13 +12,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .core import (categorize, compile_rules, detect_anomalies, merchant_token,
-                   norm_name, parse_camt, parse_raiffeisen, parse_viseca,
-                   suggest_rule, txn_hash)
+from .core import (categorize, compile_rules, detect_anomalies, detect_recurring,
+                   merchant_token, norm_name, parse_camt, parse_raiffeisen,
+                   parse_viseca, suggest_rule, txn_hash)
 
 DATA_DIR = Path(os.environ.get("SPENDFLOW_DATA", "data"))
 DB_PATH = DATA_DIR / "spendflow.db"
 RULES_PATH = DATA_DIR / "rules.json"
+BUDGETS_PATH = DATA_DIR / "budgets.json"
+RECUR_PATH = DATA_DIR / "recurring.json"
 STATIC = Path(__file__).parent.parent / "static"
 
 def db() -> sqlite3.Connection:
@@ -60,6 +62,9 @@ def init() -> None:
             con.execute("ALTER TABLE txn ADD COLUMN reconciled INTEGER DEFAULT 0")
         if "parent_id" not in cols:
             con.execute("ALTER TABLE txn ADD COLUMN parent_id INTEGER")
+        if "note" not in cols:
+            # free-text note/tag per transaction; never touched by rule re-application
+            con.execute("ALTER TABLE txn ADD COLUMN note TEXT")
         for r in con.execute("SELECT id, desc FROM txn WHERE merchant IS NULL").fetchall():
             con.execute("UPDATE txn SET merchant=? WHERE id=?",
                         (merchant_token(r["desc"]), r["id"]))
@@ -143,6 +148,17 @@ class Rename(BaseModel):
     old: str
     new: str
     sub_of: str | None = None  # limit a sub rename to one parent category (optional)
+
+
+class Note(BaseModel):
+    id: int
+    note: str | None = None   # empty/blank clears
+
+
+class RecurOverride(BaseModel):
+    merchant: str              # the detected merchant token this override applies to
+    label: str | None = None   # friendly display name ('Rent'); blank clears
+    ignore: bool = False       # True = not actually recurring, hide from the card
 
 
 class Merge(BaseModel):
@@ -473,6 +489,71 @@ def statements():
     }
 
 
+def _recur_overrides() -> dict:
+    return json.loads(RECUR_PATH.read_text()) if RECUR_PATH.exists() else {}
+
+
+@app.get("/api/recurring")
+def recurring():
+    """Recurring expenses (subscriptions, standing orders) with price-change and
+    stopped flags. Reconciled lump-sums are excluded so a credit-card bill and its
+    itemized line items are never both counted.
+
+    Detection is heuristic, so user overrides from recurring.json are merged in:
+    'label' gives a row a friendly display name ('Rent'), 'ignore' marks a false
+    positive (a cash-withdrawal habit is regular, but not a subscription). Ignored
+    rows are still returned, flagged — the UI hides them but can offer a restore."""
+    with db() as con:
+        txns = [dict(r) for r in con.execute(
+            "SELECT merchant, date, amount FROM txn WHERE reconciled=0")]
+    rows = detect_recurring(txns)
+    ov = _recur_overrides()
+    for r in rows:
+        o = ov.get(r["merchant"], {})
+        r["label"] = o.get("label")
+        r["ignored"] = bool(o.get("ignore"))
+    return rows
+
+
+@app.post("/api/recurring/override")
+def recur_override(o: RecurOverride):
+    """Set or clear the override for one merchant. An empty override (no label,
+    not ignored) removes the entry entirely, returning the row to pure detection."""
+    ov = _recur_overrides()
+    entry = {}
+    if o.label and o.label.strip():
+        entry["label"] = o.label.strip()
+    if o.ignore:
+        entry["ignore"] = True
+    if entry:
+        ov[o.merchant] = entry
+    else:
+        ov.pop(o.merchant, None)
+    RECUR_PATH.write_text(json.dumps(ov, indent=1, ensure_ascii=False))
+    return {"ok": True, "override": entry or None}
+
+
+@app.get("/api/budgets")
+def get_budgets():
+    """{category: monthly_limit}. Stored beside the rules, editable by hand."""
+    if BUDGETS_PATH.exists():
+        return json.loads(BUDGETS_PATH.read_text())
+    return {}
+
+
+@app.put("/api/budgets")
+def put_budgets(body: dict):
+    """Replace the budget map. Keys are normalized like every other category name;
+    zero/empty values delete the budget for that category."""
+    out = {}
+    for cat, v in body.items():
+        n = norm_name(cat)
+        if n and n != "Uncategorized" and isinstance(v, (int, float)) and v > 0:
+            out[n] = round(float(v), 2)
+    BUDGETS_PATH.write_text(json.dumps(out, indent=1, ensure_ascii=False))
+    return out
+
+
 @app.get("/api/anomalies")
 def anomalies():
     """Category-hygiene findings (near-duplicate names, name reused across levels,
@@ -512,6 +593,20 @@ def assign(a: Assign):
                                 [(a.cat, a.sub, i) for i in a.ids])
         applied = apply_rules(con)
     return {"ok": True, "reapplied": applied}
+
+
+@app.post("/api/note")
+def set_note(n: Note):
+    """Attach a free-text note to one transaction (or clear it with blank/None).
+    Notes live outside the categorization machinery: rules never touch them, and
+    they survive re-tagging. '#hashtags' in the text are just text — the ledger
+    search finds them like any other word."""
+    note = (n.note or "").strip() or None
+    with db() as con:
+        cur = con.execute("UPDATE txn SET note=? WHERE id=?", (note, n.id))
+        if not cur.rowcount:
+            raise HTTPException(404, "no such transaction")
+    return {"ok": True, "note": note}
 
 
 @app.get("/api/rules")
