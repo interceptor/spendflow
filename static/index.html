@@ -19,6 +19,7 @@
   header h1 { font-size:20px; margin:0; letter-spacing:.5px; font-weight:650; }
   header h1 span { color:var(--accent); }
   header .sub { color:var(--muted); font-size:13px; }
+  header .sub.flow i { color:var(--accent); font-style:normal; }   /* the flow in SpendFlow */
   .wrap { padding:0 24px 40px; max-width:1400px; margin:0 auto; }
 
   /* tab bar */
@@ -65,7 +66,9 @@
   #mapping .row { display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
   #mapping h3 { margin:0 0 10px; font-size:14px; }
 
-  #chart, #trend { width:100%; display:none; margin-top:6px; }
+  #chart, #trend, #traj { width:100%; display:none; margin-top:6px; }
+  tr.rowlink { cursor:pointer; }
+  tr.rowlink:hover { background:var(--panel2); }
 
   .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
   @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
@@ -198,6 +201,8 @@
              background:rgba(88,201,185,.13); color:var(--accent); cursor:pointer; }
   .tagpill:hover { background:rgba(88,201,185,.28); }
   .tagpill.inherit { background:none; border:1px solid #2c5b54; }
+  .ipill { display:inline-block; margin-left:6px; padding:0 6px; border-radius:9px;
+           font-size:10px; color:#6a9fe0; border:1px solid #2f4763; white-space:nowrap; }
   .tcount { color:var(--muted); font-size:10.5px; float:right; margin-left:10px; }
   #ledgerBody tr.recon { opacity:.45; }
   #ledgerBody .lpin { margin-left:6px; font-size:10px; color:var(--accent); }
@@ -247,6 +252,12 @@
   #cmpBody .dpos { color:var(--accent); }  /* spending decreased */
   #cmpBody tr.total td { border-top:2px solid var(--line); font-weight:600; }
 
+  /* assistant */
+  .ai-wait { color:var(--muted); font-size:13px; padding:10px 0; }
+  .ai-text { font-size:13px; line-height:1.65; padding:8px 0; white-space:pre-wrap; }
+  .ai-text .ai-h { font-weight:650; margin:10px 0 3px; white-space:normal; }
+  .ai-text .ai-li { margin-left:6px; white-space:normal; }
+
   /* drill-down dialog */
   #drill { position:fixed; inset:0; z-index:50; background:rgba(6,10,13,.66);
            display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -278,7 +289,8 @@
 <body>
 <header>
   <h1>Spend<span>Flow</span></h1>
-  <span class="sub">local &amp; private — SQLite-backed</span>
+  <span class="sub flow">import <i>→</i> coverage <i>→</i> categorize <i>→</i> tag <i>→</i> budget <i>→</i> analyze</span>
+  <span class="sub">local &amp; private</span>
 </header>
 
 <div id="tabs">
@@ -311,6 +323,8 @@
   <div id="stats">
     <div class="stat"><div class="k">Income</div><div class="v pos" id="sIn">–</div></div>
     <div class="stat"><div class="k">Expenses</div><div class="v neg" id="sOut">–</div></div>
+    <div class="stat" id="sAsideWrap" title="transfers to your own accounts (e.g. tax provisioning) — still your money, not spending">
+      <div class="k">Set aside</div><div class="v" id="sAside">–</div></div>
     <div class="stat"><div class="k">Saved</div><div class="v" id="sSave">–</div></div>
     <div class="stat"><div class="k">Savings rate</div><div class="v" id="sRate">–</div></div>
     <div class="stat"><div class="k">Period</div><div class="v mono" id="sPeriod" style="font-size:14px;padding-top:5px">–</div></div>
@@ -323,6 +337,36 @@
     Click any category, subcategory or bar to list the transactions behind it.</div>
   <div id="chart"></div>
   <div id="trend"></div>
+
+  <div id="traj"></div>
+
+  <div class="cols">
+    <div class="card" id="tagCard">
+      <h3>Tags <span id="tagTotal" style="color:var(--muted);font-weight:400"></span></h3>
+      <div class="hint">Money out per tag (including set-aside) — notes and inherited
+        recurring tags combined. Click a row to open it in the ledger.</div>
+      <table><thead><tr><th>Tag</th><th style="width:52px;text-align:right">Txns</th>
+        <th style="width:96px;text-align:right">/month</th>
+        <th style="width:110px;text-align:right">Total</th></tr></thead>
+        <tbody id="tagBody"></tbody></table>
+    </div>
+    <div class="card" id="merchCard">
+      <h3>Top merchants</h3>
+      <div class="hint">Where the money actually goes, by counterparty.
+        Click a row to see its transactions.</div>
+      <table><thead><tr><th>Merchant</th><th style="width:52px;text-align:right">Txns</th>
+        <th style="width:96px;text-align:right">Avg</th>
+        <th style="width:110px;text-align:right">Total</th></tr></thead>
+        <tbody id="merchBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="card" id="fixedCard">
+    <h3>Fixed vs discretionary <span id="fixedPct" style="color:var(--muted);font-weight:400"></span></h3>
+    <div class="hint">Committed recurring spending (from the Recurring list) against
+      everything else, per month.</div>
+    <div id="fixedChart"></div>
+  </div>
 
   <div class="cols">
     <div class="card" id="budgetCard">
@@ -359,6 +403,19 @@
       <th style="width:110px;text-align:right" id="cmpBh">B</th>
       <th style="width:130px;text-align:right">Δ</th></tr></thead>
       <tbody id="cmpBody"></tbody></table>
+  </div>
+  <div class="card" id="assistCard">
+    <h3>Assistant <span id="aiStatus" style="color:var(--muted);font-weight:400"></span></h3>
+    <div class="hint">Opt-in — nothing is sent until you click a button. <b>Suggest
+      categories</b> sends the merchant names and counts of your uncategorized
+      transactions; <b>Analyze spending</b> sends monthly totals per category, your
+      recurring commitments and budgets — never the raw ledger. Runs through your
+      local Claude CLI login; no API key, no extra account.</div>
+    <div class="actions">
+      <button class="primary small" id="aiCat">Suggest categories</button>
+      <button class="primary small" id="aiIns">Analyze my spending</button>
+    </div>
+    <div id="aiOut"></div>
   </div>
   </div><!-- /pane-overview -->
 
@@ -662,6 +719,8 @@ async function refresh() {
   refreshTagFilter();
   render();
   renderTrend();
+  renderTrajectory();
+  renderMerchants();
   renderLedger();
   loadRules();
   loadUncategorized();
@@ -671,6 +730,7 @@ async function refresh() {
   loadBudgets();
   loadRecurring();
   loadCompare();
+  loadAiStatus();
 }
 
 function render() {
@@ -679,24 +739,34 @@ function render() {
   // excluded from all spend math so the itemized children aren't double-counted.
   const active = txns.filter(t => !t.reconciled);
   const list = month ? active.filter(t => (t.date || '').startsWith(month)) : active;
-  const inc = list.filter(t => t.amount > 0), exp = list.filter(t => t.amount < 0);
+  const inc = list.filter(t => t.amount > 0);
+  // outflows split by destination: internal transfers to own accounts are 'set
+  // aside' (still my money — e.g. tax provisioning), everything else is spending
+  const allExp = list.filter(t => t.amount < 0);
+  const internalTx = allExp.filter(t => internalMerchants.has(t.merchant));
+  const exp = allExp.filter(t => !internalMerchants.has(t.merchant));
   const totalIn = inc.reduce((s, t) => s + t.amount, 0);
+  const aside = -internalTx.reduce((s, t) => s + t.amount, 0);
   const totalOut = -exp.reduce((s, t) => s + t.amount, 0);
-  const saved = totalIn - totalOut;
+  const saved = totalIn - totalOut - aside;   // free cash after real spending AND provisioning
 
   $('stats').style.display = 'flex';
   ['uncatCard', 'rulesCard', 'reviewCard', 'catsCard', 'stmtCard',
-   'ledgerCard', 'budgetCard', 'recurringCard', 'compareCard']
+   'ledgerCard', 'budgetCard', 'recurringCard', 'compareCard',
+   'tagCard', 'merchCard', 'fixedCard', 'assistCard']
     .forEach(id => $(id).style.display = 'block');
-  ['chart', 'trend', 'chartHint'].forEach(id => $(id).style.display = 'block');
+  ['chart', 'trend', 'chartHint', 'traj'].forEach(id => $(id).style.display = 'block');
   $('sIn').textContent = fmt(totalIn);
   $('sOut').textContent = fmt(totalOut);
+  $('sAside').textContent = aside ? fmt(aside) : '–';
+  $('sAsideWrap').style.display = aside ? '' : 'none';
   $('sSave').textContent = fmt(saved);
   $('sSave').className = 'v ' + (saved >= 0 ? 'pos' : 'neg');
-  $('sRate').textContent = totalIn ? (100 * saved / totalIn).toFixed(1) + ' %' : '–';
+  // savings rate counts set-aside as saved — it hasn't left your wealth
+  $('sRate').textContent = totalIn ? (100 * (saved + aside) / totalIn).toFixed(1) + ' %' : '–';
   const dates = list.map(t => t.date).filter(Boolean).sort();
   $('sPeriod').textContent = dates.length ? `${dates[0]} → ${dates.at(-1)}` : '–';
-  renderSankey(inc, exp, saved);
+  renderSankey(inc, exp, saved, internalTx);
 }
 
 const PALETTE = ['#58c9b9','#6a9fe0','#b183d6','#e0916a','#d6c96a','#7ad07a',
@@ -707,7 +777,7 @@ const colorFor = cat => {
   return catColor.get(cat);
 };
 
-function renderSankey(inc, exp, saved) {
+function renderSankey(inc, exp, saved, internalTx = []) {
   const nodes = [], idx = new Map();
   // Each node carries the filter that selects its transactions, so a click maps
   // straight to a drill-down without parsing display labels back apart.
@@ -747,6 +817,18 @@ function renderSankey(inc, exp, saved) {
     for (const [sub, sv] of sumBy(exp.filter(t => t.cat === cat && t.sub), t => t.sub))
       link(cn, node('expsub:' + cat + '\0' + sub, cat + ' · ' + sub, c,
                     {kind: 'expense', cat, sub, label: cat + ' · ' + sub}), sv, c);
+  }
+  // internal transfers: own branch, blue — money moved to yourself, not spent
+  if (internalTx.length) {
+    const ASIDE = '#6a9fe0';
+    const an = node('\0aside', 'Set aside', ASIDE,
+                    {kind: 'expense', internal: true, label: 'Set aside'});
+    link(hub, an, internalTx.reduce((s, t) => s + -t.amount, 0), ASIDE);
+    for (const [m, v] of sumBy(internalTx, t => t.merchant)) {
+      const lbl = recurLabel(m) || m;
+      link(an, node('aside:' + m, lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl,
+                    ASIDE, {kind: 'expense', merchant: m, label: lbl}), v, ASIDE);
+    }
   }
   if (saved > 0) link(hub, node('\0saved', 'Saved', '#58c9b9'), saved, '#58c9b9');
 
@@ -813,8 +895,10 @@ async function renderTrend() {
   el.on('plotly_click', ev => {
     const p = ev.points && ev.points[0];
     if (!p) return;
-    showDrill({kind: 'expense', cat: p.data.name, month: p.x,
-               label: `${p.data.name} · ${p.x}`});
+    showDrill(p.data.name === 'set aside'
+      ? {kind: 'expense', internal: true, month: p.x, label: `Set aside · ${p.x}`}
+      : {kind: 'expense', cat: p.data.name, month: p.x,
+         label: `${p.data.name} · ${p.x}`});
   });
 }
 
@@ -1003,6 +1087,11 @@ function drillMatch(f) {
     if (month && !(t.date || '').startsWith(month)) return false;
     if (f.kind === 'income' && !(t.amount > 0)) return false;
     if (f.kind === 'expense' && !(t.amount < 0)) return false;
+    if (f.merchant !== undefined && t.merchant !== f.merchant) return false;
+    if (f.internal && !internalMerchants.has(t.merchant)) return false;
+    // category drills show spending — internal set-aside has its own node
+    if (f.kind === 'expense' && !f.internal && f.merchant === undefined
+        && internalMerchants.has(t.merchant)) return false;
     if (f.cat !== undefined && t.cat !== f.cat) return false;
     if (f.sub !== undefined && t.sub !== f.sub) return false;
     return true;
@@ -1090,6 +1179,8 @@ const noteTags = note => [...(note || '').matchAll(TAG_RX)].map(m => m[0].toLowe
 // merchant -> tags inherited from its recurring label ('#taxes' on RCJU tags
 // every RCJU transaction, past and future). Rebuilt whenever recurring loads.
 let recurTagMap = new Map();
+// merchants flagged as transfers to the user's OWN accounts (set aside, not spending)
+let internalMerchants = new Set();
 
 // A transaction's effective tags: its own note's plus its merchant's inherited.
 const effTags = t =>
@@ -1162,7 +1253,9 @@ function renderLedger() {
       <td class="ldesc" title="${esc(t.desc)}"><div class="ldtext">${esc(t.desc)}</div>${
         t.note ? noteHtml(t.note) : ''}${inheritedHtml(t, disp)}</td>
       <td class="lcat">${esc(t.cat)}${t.sub ? ' · ' + esc(t.sub) : ''}${
-        t.source === 'manual' ? '<span class="lpin" title="manually tagged — immune to rules">pinned</span>' : ''}</td>
+        t.source === 'manual' ? '<span class="lpin" title="manually tagged — immune to rules">pinned</span>' : ''}${
+        internalMerchants.has(t.merchant)
+          ? '<span class="ipill" title="transfer to your own account — set aside, not spending">internal</span>' : ''}</td>
       <td class="num ${t.amount > 0 ? 'pos' : 'neg'}">${fmt(Math.abs(t.amount))}</td>
       <td class="tagcell"><button class="small" data-led="${t.id}" title="re-categorize this transaction">✎</button></td>
     </tr>`).join('');
@@ -1331,6 +1424,7 @@ function renderBudgets() {
   const spent = {};
   for (const t of txns) {
     if (t.reconciled || t.amount >= 0) continue;
+    if (internalMerchants.has(t.merchant)) continue;   // set aside ≠ spending
     if (m && !(t.date || '').startsWith(m)) continue;
     spent[t.cat] = (spent[t.cat] || 0) + -t.amount;
   }
@@ -1387,9 +1481,13 @@ async function loadRecurring() {
   recurTagMap = new Map(recurRows
     .filter(r => r.label)
     .map(r => [r.merchant, noteTags(r.label)]));
+  internalMerchants = new Set(recurRows.filter(r => r.internal).map(r => r.merchant));
   renderRecurring();
   refreshTagFilter();
   renderLedger();
+  renderTagCard();
+  renderFixedSplit();
+  render();          // tiles + sankey depend on the internal set
 }
 
 function renderRecurring() {
@@ -1405,6 +1503,7 @@ function renderRecurring() {
       <span class="rdot ${r.status}">●</span>
       <span class="rname" title="${esc(r.merchant)}">${
         r.label ? `<b>${esc(r.label)}</b> <span class="rorig">${esc(r.merchant)}</span>` : esc(r.merchant)}</span>
+      ${r.internal ? '<span class="ipill" title="own account — set aside, not spending">internal</span>' : ''}
       ${r.change ? `<span class="rchg" title="latest month vs the usual amount">${r.change > 0 ? '+' : ''}${r.change.toFixed(2)}</span>` : ''}
       ${r.status === 'stopped' ? `<span class="rstop" title="last charged ${r.last}">stopped ${r.last}</span>` : ''}
       <span class="rmo">${r.n_months}mo</span>
@@ -1431,7 +1530,8 @@ function renderRecurring() {
     b.onclick = async () => {
       const r = recurRows.find(x => x.merchant === b.dataset.runhide);
       await api('/api/recurring/override', {method: 'POST',
-        body: JSON.stringify({merchant: r.merchant, label: r.label, ignore: false})});
+        body: JSON.stringify({merchant: r.merchant, label: r.label,
+                              ignore: false, internal: !!r.internal})});
       toast('Restored'); loadRecurring();
     });
 }
@@ -1441,6 +1541,7 @@ const recEd = document.createElement('div');
 recEd.className = 'rec-editor';
 recEd.innerHTML = `
   <input type="text" id="reLabel" placeholder="Display name and/or #tags (apply to all this merchant's txns)">
+  <label class="inline"><input type="checkbox" id="reInternal" title="e.g. a savings account provisioning for tax bills — still your money"> internal — my own account (set aside, not spending)</label>
   <label class="inline"><input type="checkbox" id="reIgnore"> not recurring — hide from this list</label>
   <button class="primary small" id="reSave">Save</button>
   <button class="small" id="reCancel">Cancel</button>`;
@@ -1452,6 +1553,7 @@ function openRecurEdit(merchant, rowEl) {
   recEditMerchant = merchant;
   recEd.querySelector('#reLabel').value = r.label || '';
   recEd.querySelector('#reIgnore').checked = r.ignored;
+  recEd.querySelector('#reInternal').checked = !!r.internal;
   rowEl.after(recEd);
   recEd.querySelector('#reLabel').focus();
 }
@@ -1461,12 +1563,115 @@ recEd.querySelector('#reSave').onclick = async () => {
     await api('/api/recurring/override', {method: 'POST', body: JSON.stringify({
       merchant: recEditMerchant,
       label: recEd.querySelector('#reLabel').value.trim() || null,
-      ignore: recEd.querySelector('#reIgnore').checked})});
+      ignore: recEd.querySelector('#reIgnore').checked,
+      internal: recEd.querySelector('#reInternal').checked})});
     toast('Saved');
     recEd.remove(); recEditMerchant = null;
     loadRecurring();
   } catch (err) { alert(err.message); }
 };
+
+// ---------- Analytics: trajectory, tags, merchants, fixed split ----------
+function renderTrajectory() {
+  const active = txns.filter(t => !t.reconciled && t.date);
+  const months = [...new Set(active.map(t => t.date.slice(0, 7)))].sort();
+  if (months.length < 2) { $('traj').style.display = 'none'; return; }
+  const net = months.map(m => active.filter(t => t.date.startsWith(m))
+    .reduce((s, t) => s + t.amount, 0));
+  let run = 0;
+  const cum = net.map(v => run += v);
+  Plotly.react('traj', [
+    {type: 'bar', name: 'monthly net', x: months, y: net,
+     marker: {color: net.map(v => v >= 0 ? '#58c9b9' : '#e0705a')}},
+    {type: 'scatter', name: 'cumulative', x: months, y: cum,
+     mode: 'lines+markers', line: {color: '#6a9fe0', width: 2}},
+  ], {
+    title: {text: 'Net & cumulative savings', font: {size: 14}},
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: {color: '#dde5ec', size: 12}, margin: {t: 40, l: 55, r: 10, b: 40},
+    height: 280, legend: {orientation: 'h', y: -0.2},
+    xaxis: {gridcolor: '#26313b'}, yaxis: {gridcolor: '#26313b'},
+  }, {displayModeBar: false, responsive: true});
+}
+
+function renderTagCard() {
+  const active = txns.filter(t => !t.reconciled && t.amount < 0);
+  const months = new Set(active.filter(t => t.date).map(t => t.date.slice(0, 7))).size || 1;
+  const per = new Map();   // tag -> {total, n}
+  for (const t of active)
+    for (const k of effTags(t)) {
+      const e = per.get(k) || {total: 0, n: 0};
+      e.total += -t.amount; e.n++; per.set(k, e);
+    }
+  const disp = collectTags();
+  const rows = [...per.entries()].sort((a, b) => b[1].total - a[1].total);
+  const esc = s => String(s).replace(/</g, '&lt;');
+  $('tagTotal').textContent = rows.length ? `· ${rows.length}` : '';
+  $('tagBody').innerHTML = rows.length ? rows.map(([k, e]) => `
+    <tr class="rowlink" data-tag="${esc(k)}">
+      <td><span class="tagpill">${esc((disp.get(k) || {display: k}).display)}</span></td>
+      <td class="num">${e.n}</td>
+      <td class="num">${fmt(e.total / months)}</td>
+      <td class="num">${fmt(e.total)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" style="color:var(--muted)">No tags yet — add #tags to notes or recurring labels.</td></tr>';
+  // row click = pill click (delegated tagpill handler covers the pill itself)
+  $('tagBody').querySelectorAll('tr.rowlink').forEach(tr => tr.onclick = () => {
+    showTab('transactions');
+    $('lSearch').value = ''; $('lTag').value = tr.dataset.tag; renderLedger();
+  });
+}
+
+function renderMerchants() {
+  const per = new Map();
+  for (const t of txns) {
+    if (t.reconciled || t.amount >= 0 || !t.merchant) continue;
+    const e = per.get(t.merchant) || {total: 0, n: 0};
+    e.total += -t.amount; e.n++; per.set(t.merchant, e);
+  }
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const rows = [...per.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 12);
+  $('merchBody').innerHTML = rows.map(([m, e]) => `
+    <tr class="rowlink" data-m="${esc(m)}">
+      <td class="ldesc" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${esc(m)}">${esc(m)}</td>
+      <td class="num">${e.n}</td>
+      <td class="num">${fmt(e.total / e.n)}</td>
+      <td class="num">${fmt(e.total)}</td>
+    </tr>`).join('');
+  $('merchBody').querySelectorAll('tr.rowlink').forEach(tr => tr.onclick = () => {
+    showTab('transactions');
+    $('lTag').value = ''; $('lSearch').value = tr.dataset.m; renderLedger();
+  });
+}
+
+function renderFixedSplit() {
+  const fixed = new Set(recurRows
+    .filter(r => !r.ignored && !r.internal && r.status === 'active')
+    .map(r => r.merchant));
+  const active = txns.filter(t => !t.reconciled && t.amount < 0 && t.date
+                                  && !internalMerchants.has(t.merchant));
+  const months = [...new Set(active.map(t => t.date.slice(0, 7)))].sort();
+  if (months.length < 2 || !fixed.size) { $('fixedCard').style.display = 'none'; return; }
+  const f = months.map(m => active.filter(t => t.date.startsWith(m) && fixed.has(t.merchant))
+    .reduce((s, t) => s + -t.amount, 0));
+  const d = months.map(m => active.filter(t => t.date.startsWith(m) && !fixed.has(t.merchant))
+    .reduce((s, t) => s + -t.amount, 0));
+  const totF = f.reduce((a, b) => a + b, 0), totAll = totF + d.reduce((a, b) => a + b, 0);
+  const income = txns.filter(t => !t.reconciled && t.amount > 0)
+    .reduce((s, t) => s + t.amount, 0);
+  $('fixedPct').textContent =
+    `· ${(100 * totF / totAll).toFixed(0)}% of spending · ${(100 * totF / income).toFixed(0)}% of income`;
+  Plotly.react('fixedChart', [
+    {type: 'bar', name: 'fixed (recurring)', x: months, y: f, marker: {color: '#6a9fe0'}},
+    {type: 'bar', name: 'discretionary', x: months, y: d, marker: {color: '#58c9b9'}},
+  ], {
+    barmode: 'stack', paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: {color: '#dde5ec', size: 12}, margin: {t: 10, l: 55, r: 10, b: 40},
+    height: 240, legend: {orientation: 'h', y: -0.25},
+    xaxis: {gridcolor: '#26313b'}, yaxis: {gridcolor: '#26313b'},
+  }, {displayModeBar: false, responsive: true});
+}
 
 // ---------- Month comparison ----------
 let cmpStats = [];
@@ -1508,6 +1713,91 @@ function renderCompare() {
 $('cmpA').onchange = renderCompare;
 $('cmpB').onchange = renderCompare;
 
+// ---------- Assistant (local Claude CLI) ----------
+let aiBusy = false;
+
+async function loadAiStatus() {
+  try {
+    const s = await api('/api/ai/status');
+    if (!s.available) {
+      $('aiStatus').textContent = '· Claude CLI not found';
+      $('aiCat').disabled = $('aiIns').disabled = true;
+    }
+  } catch (e) { /* card stays usable; errors surface on click */ }
+}
+
+function aiSetBusy(msg) {
+  aiBusy = !!msg;
+  $('aiCat').disabled = $('aiIns').disabled = aiBusy;
+  if (msg) $('aiOut').innerHTML = `<div class="ai-wait">${msg}</div>`;
+}
+
+// minimal markdown: escape, then **bold**, ### headers, - bullets
+function mdLite(text) {
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return esc(text)
+    .replace(/^#{1,4} (.+)$/gm, '<div class="ai-h">$1</div>')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/^[-*] (.+)$/gm, '<div class="ai-li">• $1</div>')
+    .replace(/\n{2,}/g, '<br>');
+}
+
+$('aiIns').onclick = async () => {
+  aiSetBusy('Analyzing your aggregates… (10–60 s, running through your Claude CLI)');
+  try {
+    const r = await api('/api/ai/insights', {method: 'POST'});
+    $('aiOut').innerHTML = `<div class="ai-text">${mdLite(r.text)}</div>`;
+  } catch (err) {
+    $('aiOut').innerHTML = `<div class="ai-text">✗ ${err.message}</div>`;
+  }
+  aiSetBusy(null);
+};
+
+$('aiCat').onclick = async () => {
+  aiSetBusy('Asking for category suggestions… (10–60 s, running through your Claude CLI)');
+  try {
+    const r = await api('/api/ai/categorize', {method: 'POST'});
+    const esc = s => String(s).replace(/</g, '&lt;');
+    $('aiOut').innerHTML = r.proposals.length ? `
+      <table><thead><tr><th>Merchant</th><th style="width:170px">Suggested</th>
+        <th style="width:52px;text-align:right">Txns</th>
+        <th style="width:100px;text-align:right">Total</th>
+        <th style="width:120px"></th></tr></thead>
+      <tbody>${r.proposals.map((p, i) => `
+        <tr data-ai="${i}">
+          <td class="ldesc" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="${esc(p.merchant)}">${esc(p.merchant)}</td>
+          <td class="lcat">${esc(p.cat)}${p.sub ? ' · ' + esc(p.sub) : ''}</td>
+          <td class="num">${p.n}</td>
+          <td class="num">${fmt(p.total)}</td>
+          <td class="tagcell">
+            <button class="small primary" data-aiacc="${i}">✓ rule</button>
+            <button class="small" data-aidis="${i}" title="dismiss">✕</button>
+          </td>
+        </tr>`).join('')}</tbody></table>
+      <div class="hint" style="margin:8px 0 0">✓ saves a rule (applies to all matching
+        transactions, now and on future imports). Nothing is applied until you accept.</div>`
+      : '<div class="ai-text">Nothing uncategorized — all clean ✓</div>';
+    aiProposals = r.proposals;
+    $('aiOut').querySelectorAll('button[data-aiacc]').forEach(b => b.onclick = async () => {
+      const p = aiProposals[+b.dataset.aiacc];
+      try {
+        await api('/api/assign', {method: 'POST', body: JSON.stringify(
+          {match: p.match, cat: p.cat, sub: p.sub})});
+        toast(`Rule saved: ${p.cat}`);
+        b.closest('tr').remove();
+        refresh();
+      } catch (err) { alert(err.message); }
+    });
+    $('aiOut').querySelectorAll('button[data-aidis]').forEach(b =>
+      b.onclick = () => b.closest('tr').remove());
+  } catch (err) {
+    $('aiOut').innerHTML = `<div class="ai-text">✗ ${err.message}</div>`;
+  }
+  aiSetBusy(null);
+};
+let aiProposals = [];
+
 // ---------- Tabs ----------
 function showTab(name) {
   document.querySelectorAll('#tabs button').forEach(b =>
@@ -1515,7 +1805,9 @@ function showTab(name) {
   document.querySelectorAll('.tabpane').forEach(p =>
     p.classList.toggle('active', p.id === 'pane-' + name));
   // Plotly sizes to a hidden container as 0-width; re-render once visible.
-  if (name === 'overview' && txns.length) render(), renderTrend();
+  if (name === 'overview' && txns.length) {
+    render(); renderTrend(); renderTrajectory(); renderFixedSplit();
+  }
   try { localStorage.setItem('sf.tab', name); } catch (e) {}
 }
 document.querySelectorAll('#tabs button').forEach(b =>
