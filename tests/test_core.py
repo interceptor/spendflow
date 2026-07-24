@@ -369,6 +369,71 @@ def test_anomaly_ignores_uncategorized():
     assert detect_anomalies(txns) == []
 
 
+# ---------- recurring detection ----------
+from spendflow.core import detect_recurring
+
+
+def _sub(merchant, amount, months, day="05"):
+    return [{"merchant": merchant, "date": f"{m}-{day}", "amount": -amount}
+            for m in months]
+
+
+def test_recurring_detects_stable_monthly_charge():
+    txns = _sub("Wingo", 34.07, ["2026-01", "2026-02", "2026-03", "2026-04"])
+    r = detect_recurring(txns)
+    assert len(r) == 1
+    assert r[0]["merchant"] == "Wingo" and r[0]["monthly"] == 34.07
+    assert r[0]["status"] == "active" and r[0]["change"] == 0.0
+
+
+def test_recurring_ignores_short_and_gappy_histories():
+    two = _sub("NewSub", 9.90, ["2026-03", "2026-04"])          # only 2 months
+    gappy = _sub("Rare", 50.0, ["2026-01", "2026-03", "2026-06"])  # 3 of 6 months
+    assert detect_recurring(two + gappy) == []
+
+
+def test_recurring_ignores_habitual_shopping():
+    # stable monthly total but many charges per month -> groceries, not a sub
+    txns = []
+    for m in ["2026-01", "2026-02", "2026-03", "2026-04"]:
+        for d in ("03", "10", "17", "24"):
+            txns.append({"merchant": "Migros", "date": f"{m}-{d}", "amount": -25.0})
+    assert detect_recurring(txns) == []
+
+
+def test_recurring_ignores_unstable_amounts():
+    txns = [{"merchant": "Amazon", "date": f"{m}-05", "amount": -a}
+            for m, a in [("2026-01", 12.0), ("2026-02", 180.0),
+                         ("2026-03", 45.0), ("2026-04", 9.0)]]
+    assert detect_recurring(txns) == []
+
+
+def test_recurring_flags_stopped():
+    # data extends to June (via another active sub); Sunrise last billed in March
+    txns = (_sub("Sunrise", 65.0, ["2026-01", "2026-02", "2026-03"])
+            + _sub("Wingo", 34.07, ["2026-01", "2026-02", "2026-03",
+                                    "2026-04", "2026-05", "2026-06"]))
+    r = {x["merchant"]: x for x in detect_recurring(txns)}
+    assert r["Sunrise"]["status"] == "stopped"
+    assert r["Wingo"]["status"] == "active"
+    # actives sort before stopped
+    assert [x["status"] for x in detect_recurring(txns)] == ["active", "stopped"]
+
+
+def test_recurring_flags_price_change():
+    txns = _sub("Netflix", 18.90, ["2026-01", "2026-02", "2026-03", "2026-04"])
+    txns += _sub("Netflix", 21.90, ["2026-05"])   # price rise in the latest month
+    r = detect_recurring(txns)
+    assert len(r) == 1 and r[0]["change"] == 3.0
+
+
+def test_recurring_income_and_missing_merchant_ignored():
+    txns = [{"merchant": "Employer", "date": f"2026-0{m}-25", "amount": 5000.0}
+            for m in range(1, 7)]
+    txns.append({"merchant": None, "date": "2026-01-05", "amount": -10.0})
+    assert detect_recurring(txns) == []
+
+
 # ---------- Viseca credit-card parser ----------
 from spendflow.core import parse_viseca
 

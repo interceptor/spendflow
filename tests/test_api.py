@@ -358,6 +358,80 @@ def test_statements_clean_when_everything_covered(client):
     assert s["missing"]["cards"] == [] and s["missing"]["months"] == []
 
 
+# ---------- notes ----------
+def test_note_set_show_clear(client):
+    client.post("/api/import/txns", json=TXNS)
+    tid = client.get("/api/txns").json()[0]["id"]
+    r = client.post("/api/note", json={"id": tid, "note": "  lunch with Anna #work  "})
+    assert r.json()["note"] == "lunch with Anna #work"      # trimmed
+    assert next(t for t in client.get("/api/txns").json()
+                if t["id"] == tid)["note"] == "lunch with Anna #work"
+    client.post("/api/note", json={"id": tid, "note": "   "})  # blank clears
+    assert next(t for t in client.get("/api/txns").json() if t["id"] == tid)["note"] is None
+
+
+def test_note_survives_rule_reapplication(client):
+    client.post("/api/import/txns", json=TXNS)
+    tid = next(t["id"] for t in client.get("/api/txns").json() if "MIGROS" in t["desc"])
+    client.post("/api/note", json={"id": tid, "note": "#groceries big shop"})
+    client.put("/api/rules", json={"rules": [{"match": "migros", "cat": "groceries"}]})
+    t = next(t for t in client.get("/api/txns").json() if t["id"] == tid)
+    assert t["cat"] == "groceries" and t["note"] == "#groceries big shop"
+
+
+def test_note_unknown_id_404(client):
+    assert client.post("/api/note", json={"id": 99999, "note": "x"}).status_code == 404
+
+
+# ---------- recurring + budgets ----------
+def test_recurring_endpoint_excludes_reconciled(client):
+    from spendflow import app as app_mod
+    monthly = [{"date": f"2026-0{m}-05", "desc": "Zahlung Wingo", "amount": -34.07}
+               for m in range(1, 5)]
+    client.post("/api/import/txns", json=monthly + [
+        {"date": "2026-04-27", "desc": "Zahlung Viseca Payment Services AG", "amount": -100.00}])
+    app_mod._import_cc(CC_TEXT)   # reconciles the Viseca debit
+    r = client.get("/api/recurring").json()
+    assert [x["merchant"] for x in r] == ["Wingo"]
+    assert r[0]["monthly"] == 34.07 and r[0]["status"] == "active"
+
+
+def test_recurring_overrides_label_and_ignore(client):
+    monthly = [{"date": f"2026-0{m}-05", "desc": "Zahlung Wingo", "amount": -34.07}
+               for m in range(1, 5)]
+    client.post("/api/import/txns", json=monthly)
+    r0 = client.get("/api/recurring").json()[0]
+    assert (r0["label"], r0["ignored"]) == (None, False)   # no override yet
+
+    client.post("/api/recurring/override",
+                json={"merchant": "Wingo", "label": "Mobile plan", "ignore": False})
+    r1 = client.get("/api/recurring").json()[0]
+    assert r1["label"] == "Mobile plan" and not r1["ignored"]
+
+    # ignore keeps the row in the payload, flagged — the UI decides visibility
+    client.post("/api/recurring/override",
+                json={"merchant": "Wingo", "label": "Mobile plan", "ignore": True})
+    r2 = client.get("/api/recurring").json()[0]
+    assert r2["ignored"] and r2["label"] == "Mobile plan"
+
+    # empty override clears the entry entirely
+    client.post("/api/recurring/override", json={"merchant": "Wingo"})
+    r3 = client.get("/api/recurring").json()[0]
+    assert (r3["label"], r3["ignored"]) == (None, False)
+
+
+def test_budgets_roundtrip_and_normalization(client):
+    assert client.get("/api/budgets").json() == {}
+    r = client.put("/api/budgets", json={"Groceries": 600, "leisure": 250.5,
+                                         "junk": 0, "Uncategorized": 99})
+    # keys normalized, zero and the sentinel dropped
+    assert r.json() == {"groceries": 600.0, "leisure": 250.5}
+    assert client.get("/api/budgets").json() == {"groceries": 600.0, "leisure": 250.5}
+    # replacing the map removes absent keys
+    client.put("/api/budgets", json={"groceries": 500})
+    assert client.get("/api/budgets").json() == {"groceries": 500.0}
+
+
 # ---------- categories overview + bulk merge ----------
 def test_categories_overview_reports_usage(client):
     client.post("/api/import/txns", json=TXNS)
